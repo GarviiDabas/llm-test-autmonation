@@ -1,0 +1,10 @@
+# Core
+google-genai>=1.0.0          # New unified Gemini SDK. The old google-generativeai
+                             # package is deprecated (EOL 30 Nov 2025) - don't use it.
+playwright>=1.47.0
+pytest>=8.3.0
+pytest-playwright>=0.5.0
+pytest-json-report>=1.5.0    # structured JSON test reports, generated pass or fail
+PyYAML>=6.0
+requests>=2.32.0
+python-dotenv>=1.0.0

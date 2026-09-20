@@ -1,0 +1,39 @@
+# --- Secrets - never commit real API keys or credentials ---
+.env
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# --- Pytest / test tooling ---
+.pytest_cache/
+.pytest-report.json
+
+# --- Playwright ---
+test-results/
+playwright-report/
+playwright/.cache/
+
+# --- Generated pipeline output - regenerate, don't commit ---
+# Keep these out unless you specifically want to track a known-good
+# baseline; they're produced fresh by context_gatherer.py, generate_tests.py,
+# and run_tests.py each run.
+context/*.json
+context/*.png
+logs/
+tests/*_manifest.json
+
+# Uncomment the line below if you'd rather NOT version-control the
+# generated test code either (many teams do want this committed and
+# reviewed like any other code, so it's off by default):
+# tests/*.py
+
+# --- OS/editor noise ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
