@@ -1,7 +1,0 @@
-{
-    "python.testing.pytestArgs": [
-        "eventhub-end-to-end-testing"
-    ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
-}
