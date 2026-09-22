@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Test spec: this is the "prompt" for the pipeline, but structured instead of
+# free text. Keep it in version control - it's your source of truth.
+# ---------------------------------------------------------------------------
+
+project_name: "eventhub"
+
+target:
+  base_url: "https://eventhub.rahulshettyacademy.com"
+  environment: "staging"
+  auth:
+    required: true
+    type: "form_login"
+    login_url: "https://eventhub.rahulshettyacademy.com/login"
+    username_env: "TEST_USERNAME"
+    password_env: "TEST_PASSWORD"
+
+test_types:
+  ui: true
+  api: true
+
+framework:
+  ui: "playwright-python"
+  api: "requests+pytest"
+  test_runner: "pytest"
+
+coverage:
+  level: "smoke"
+  focus_areas:
+    - "user can register a new account (POST /auth/register)"
+    - "user can log in with valid credentials (POST /auth/login)"
+    - "login fails with a clear error on wrong password"
+    - "GET /auth/me returns the logged-in user's profile when authenticated"
+    - "GET /auth/me is rejected without a valid token"
+    - "GET /events returns a list of events with pagination metadata"
+    - "GET /events/{id} returns a single event's details"
+    - "UI: user can browse events and open an event's detail page"
+    - "UI: user can complete a booking for an available event"
+    - "POST /bookings succeeds for an available event and returns a booking reference"
+    - "POST /bookings is rejected for a sold-out or invalid event id"
+    - "GET /bookings/ref/{ref} retrieves a booking by its reference code"
+    - "DELETE /bookings/{id} cancels a booking and frees the seat"
+
+constraints:
+  - "Do not submit real payments - use sandbox/test data only"
+  - "Do not create more than 3 new user accounts per run"
+  - "Do not delete or modify events created by other users"
+  - "Do not permanently delete/cancel bookings unless the test created them itself"
+  - "All destructive actions must run against staging only, never production"
+  - "The test account has admin privileges (Add New Event, Manage Events). Do not write tests that use admin-only actions (creating, editing, or deleting events via /admin) unless explicitly asked for - treat admin flows as out of scope for this smoke suite"
+
+api:
+  # No raw OpenAPI JSON URL confirmed yet - endpoints below were transcribed
+  # manually from the Swagger UI page. See context/api_context.json for the
+  # full list with schema names. If you find the raw JSON spec URL (check
+  # DevTools > Network while the Swagger UI page loads), add it here and
+  # context_gatherer.py can pull exact field-level detail instead.
+  openapi_spec_url: ""
+  base_url: "https://api.eventhub.rahulshettyacademy.com/api"
+  endpoints:
+    - {path: "/auth/register", method: "POST"}
+    - {path: "/auth/login", method: "POST"}
+    - {path: "/auth/me", method: "GET", auth_required: true}
+    - {path: "/events", method: "GET"}
+    - {path: "/events/{id}", method: "GET"}
+    - {path: "/bookings", method: "POST"}
+    - {path: "/bookings/ref/{ref}", method: "GET"}
+    - {path: "/bookings/{id}", method: "DELETE"}
+
+output:
+  test_dir: "tests/"
+  naming_convention: "test_{feature}_{type}.py"
