@@ -23,17 +23,15 @@ source of truth - keep it in version control.
 
 **2. Gather context.**
 ```bash
+# Option A: Playwright MCP Context Gatherer (Recommended - Protocol Aligned)
+python mcp_context_gatherer.py --url https://your-app.com/login --out context/
+
+# Option B: Standard Context Gatherer
 python context_gatherer.py --url https://your-app.com/login \
     --openapi https://your-app.com/api/openapi.json \
     --out context/
 ```
-This drives a headless Chromium browser to the page, extracts every visible
-interactive element with a suggested Playwright locator (ranked
-`data-testid` > role/aria-label > id > name > text), takes a full-page
-screenshot, and pulls a compact summary of your OpenAPI spec if you have one.
-Run it once per page/flow you want covered - `context/` fills up with a
-`ui_context.json`, `api_context.json`, and `screenshot.png` you can inspect
-directly.
+This drives a Chromium browser, connects via Playwright MCP protocol / live page evaluation, extracts interactive elements with a suggested Playwright locator (ranked `data-testid` > role/aria-label > id > name > text), and pulls a compact OpenAPI spec summary.
 
 **3. Generate tests.**
 ```bash
@@ -41,8 +39,7 @@ python generate_tests.py --spec config/test_spec.yaml --context context/
 ```
 Sends the spec + context to Gemini and writes `tests/test_<project>.py`
 plus a `_manifest.json` describing each generated test (id, description,
-type, expected result). The raw model response is also saved to
-`logs/raw_model_output.txt` for debugging if parsing fails.
+type, expected result).
 
 **4. Review before running - this step is not optional.** Treat the output
 like a pull request:
@@ -52,23 +49,11 @@ like a pull request:
 - [ ] Test names and docstrings actually describe what's being verified
 - [ ] Constraints from the spec are respected (account limits, environment)
 
-**5. Run.**
+**5. Run tests.**
 ```bash
 python run_tests.py --path tests/test_your_project.py
 ```
-This always writes `logs/report_<timestamp>.json` (structured, machine
-readable) and `logs/summary_<timestamp>.txt` (human readable) - on a full
-pass as well as a failure. `pytest.ini` is already configured to capture a
-screenshot, video, and trace on any UI test failure, so most failures are
-debuggable from the log alone.
-
-**6. Optional: triage failures with Gemini.**
-```bash
-python run_tests.py --path tests/ --triage
-```
-Sends failure details back to Gemini to classify each as a real bug, a
-flaky test, a stale locator, or an environment issue. This is a starting
-point for debugging, not a verdict - it still goes through you.
+Generates an HTML report at `reports/report.html`.
 
 ## A note on the Gemini model name
 

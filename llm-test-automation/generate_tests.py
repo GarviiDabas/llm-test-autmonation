@@ -44,9 +44,36 @@ the user - never invent locators, endpoints, or fields that aren't in the
 supplied context.
 
 Rules:
-- Use ONLY the locators suggested in the context, or ones directly
-  derivable from the accessibility tree / element list. Never guess a
-  CSS selector that wasn't given to you.
+- This is PYTHON Playwright, not JavaScript/TypeScript Playwright. Assertion
+  methods use snake_case: to_be_visible(), to_have_url(), to_have_value(),
+  to_be_enabled(), etc. NEVER use camelCase JS-style names like
+  toBeVisible(), toHaveURL(), toHaveValue() - these do not exist in the
+  Python API and will crash with AttributeError.
+- `page` is a FIXTURE, not an importable name. NEVER write
+  `from playwright.sync_api import page` - this does not exist and will
+  crash. The only real imports from playwright.sync_api are `Page` (the
+  type, capital P, used only for type hints) and `expect`. A test receives
+  the page fixture as a parameter: `def test_x(self, page: Page):`.
+- expect(page).to_have_url() accepts a string or a compiled regex
+  (re.compile(...)) - NEVER a lambda or predicate function. Import re if
+  you use this.
+- When you need a unique value (e.g. a unique test email), use the
+  simplest possible expression: `int(time.time())` or
+  `uuid.uuid4().hex[:8]`. Do not write nested or chained expressions you
+  have not double-checked are syntactically valid Python - a malformed
+  expression breaks the entire file, not just one test.
+- If any endpoint in the API context is marked auth_required: true, OR if
+  you cannot confirm an endpoint is public, write the test so it first
+  obtains a token (via POST /auth/register or /auth/login) and sends it
+  as an Authorization: Bearer <token> header. Do not assume an endpoint is
+  public just because the API context doesn't explicitly say it requires
+  auth - when in doubt, send the token anyway, since sending an unneeded
+  token is harmless but omitting a required one causes a 401 failure that
+  looks like a bug in the app rather than in the test.
+- If the API context includes a "note" field on an endpoint describing a
+  CONFIRMED response shape or behavior from a real test run, treat that
+  as ground truth and write assertions that match it exactly - it is more
+  reliable than the schema name alone.
 - Some data-testid values appear MORE THAN ONCE in the context (e.g. a
   repeated card or button in a list). If you use a get_by_test_id() or
   similar locator whose testid appears more than once in the supplied
@@ -54,6 +81,9 @@ Rules:
   using a specific piece of text from that one element, or .nth(index).
   Never use a plain get_by_test_id() call that would match multiple
   elements without doing this.
+- Use ONLY the locators suggested in the context, or ones directly
+  derivable from the accessibility tree / element list. Never guess a
+  CSS selector that wasn't given to you.
 - Use ONLY the endpoints, methods, and parameters present in the API
   context. Never invent an endpoint.
 - Respect every item under "constraints" in the spec exactly (e.g. no real
@@ -82,7 +112,6 @@ def build_prompt(spec: dict, ui_context: dict | None, api_context: dict | None) 
     if ui_context:
         trimmed = {**ui_context}
         trimmed.pop("accessibility_tree", None)  # keep prompt lean; element list is usually enough
-        trimmed.pop("screenshot_path", None)
         parts.append("\n## UI CONTEXT (interactive elements with suggested locators)\n")
         parts.append(json.dumps(trimmed, indent=2))
     if api_context:
@@ -91,25 +120,22 @@ def build_prompt(spec: dict, ui_context: dict | None, api_context: dict | None) 
     return "".join(parts)
 
 
-def call_gemini(prompt: str, screenshot_path: Path | None, model_name: str) -> str:
+def call_gemini(prompt: str, model_name: str) -> str:
     client = genai.Client()  # reads GEMINI_API_KEY from the environment
-
-    contents = [prompt]
-    if screenshot_path and screenshot_path.exists():
-        contents.append(
-            types.Part.from_bytes(data=screenshot_path.read_bytes(), mime_type="image/png")
-        )
 
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
         temperature=0.2,  # low temperature - we want consistent, boring test code
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
     )
 
     backoff = RETRY_BACKOFF_SECONDS
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = client.models.generate_content(
-                model=model_name, contents=contents, config=config,
+                model=model_name, contents=[prompt], config=config,
             )
             return response.text
         except genai_errors.ServerError as e:
@@ -121,6 +147,23 @@ def call_gemini(prompt: str, screenshot_path: Path | None, model_name: str) -> s
                   f"(attempt {attempt}/{MAX_RETRIES})...")
             time.sleep(backoff)
             backoff *= 2
+
+
+def sanitize_generated_code(code: str) -> str:
+    """Belt-and-suspenders fixes for mistakes the model has made repeatedly
+    despite prompt instructions saying not to. `page` is a pytest-playwright
+    FIXTURE, not an importable name from playwright.sync_api - strip it from
+    any import line here rather than relying solely on the prompt, since
+    that hasn't been 100% reliable in practice."""
+    def fix_import(match):
+        names = [n.strip() for n in match.group(1).split(",")]
+        had_page = "page" in names
+        names = [n for n in names if n != "page"]
+        if had_page and "Page" not in names:
+            names.append("Page")
+        return f"from playwright.sync_api import {', '.join(names)}"
+
+    return re.sub(r"from playwright\.sync_api import ([^\n]+)", fix_import, code)
 
 
 def parse_response(text: str) -> tuple[list, str]:
@@ -160,19 +203,21 @@ def main():
         api_context = json.loads(api_path.read_text())
 
     prompt = build_prompt(spec, ui_context, api_context)
-    screenshot_path = Path(ui_context["screenshot_path"]) if ui_context else None
 
     print(f"Calling {args.model} ...")
-    raw_output = call_gemini(prompt, screenshot_path, args.model)
+    raw_output = call_gemini(prompt, args.model)
 
     Path("logs").mkdir(exist_ok=True)
     Path("logs/raw_model_output.txt").write_text(raw_output)
 
     manifest, code = parse_response(raw_output)
+    code = sanitize_generated_code(code)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    feature_slug = spec.get("project_name", "generated").replace(" ", "_")
+    project_meta = spec.get("project_metadata", {})
+    project_name = project_meta.get("project_name") or spec.get("project_name", "eventhub")
+    feature_slug = project_name.replace(" ", "_")
     test_file = out_dir / f"test_{feature_slug}.py"
     test_file.write_text(code)
     (out_dir / f"{feature_slug}_manifest.json").write_text(json.dumps(manifest, indent=2))
