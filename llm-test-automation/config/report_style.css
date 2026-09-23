@@ -26,6 +26,7 @@ h1#title {
   font-weight: 700 !important;
   background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   letter-spacing: -0.025em;
   margin-bottom: 0.5rem !important;

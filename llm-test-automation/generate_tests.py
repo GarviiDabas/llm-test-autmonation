@@ -28,8 +28,12 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
+from utils.logger import get_logger
+
+logger = get_logger("generate_tests")
 
 load_dotenv()
+
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 15  # doubles each retry: 15s, 30s, 60s
@@ -204,7 +208,7 @@ def main():
 
     prompt = build_prompt(spec, ui_context, api_context)
 
-    print(f"Calling {args.model} ...")
+    logger.info(f"Calling Gemini model: {args.model}")
     raw_output = call_gemini(prompt, args.model)
 
     Path("logs").mkdir(exist_ok=True)
@@ -220,11 +224,13 @@ def main():
     feature_slug = project_name.replace(" ", "_")
     test_file = out_dir / f"test_{feature_slug}.py"
     test_file.write_text(code)
-    (out_dir / f"{feature_slug}_manifest.json").write_text(json.dumps(manifest, indent=2))
+    manifest_file = out_dir / f"{feature_slug}_manifest.json"
+    manifest_file.write_text(json.dumps(manifest, indent=2))
 
-    print(f"Wrote {test_file}")
-    print(f"Wrote {out_dir}/{feature_slug}_manifest.json ({len(manifest)} tests described)")
-    print("\nReview the generated file before running it - see README for the review checklist.")
+    logger.info(f"Wrote generated test suite to: {test_file}")
+    logger.info(f"Wrote manifest file to: {manifest_file} ({len(manifest)} tests described)")
+    logger.info("Review the generated file before running it - see README for the review checklist.")
+
 
 
 if __name__ == "__main__":

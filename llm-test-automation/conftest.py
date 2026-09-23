@@ -13,6 +13,9 @@ import pytest
 import requests
 from dotenv import load_dotenv
 from playwright.sync_api import Page
+from utils.logger import get_logger
+
+logger = get_logger("conftest")
 
 load_dotenv()
 
@@ -24,6 +27,12 @@ LOGIN_URL = os.environ.get("LOGIN_URL", "https://eventhub.rahulshettyacademy.com
 # ============================================================================
 # Environment & Client Fixtures
 # ============================================================================
+
+@pytest.fixture
+def test_logger(request):
+    """Provides a test-specific logger fixture for test functions."""
+    return get_logger(request.node.name)
+
 
 @pytest.fixture(scope="session")
 def api_base_url() -> str:
@@ -45,11 +54,18 @@ def api_client(api_base_url: str) -> requests.Session:
     test_email = f"apiuser_{email_suffix}@example.com"
     test_password = "SecurePassword123!"
 
-    # Register & Login
-    session.post(f"{api_base_url}/auth/register", json={"email": test_email, "password": test_password})
+    logger.info(f"Setting up API client session for user: {test_email}")
+    reg_resp = session.post(f"{api_base_url}/auth/register", json={"email": test_email, "password": test_password})
+    logger.debug(f"Registration response status: {reg_resp.status_code}")
+
     login_resp = session.post(f"{api_base_url}/auth/login", json={"email": test_email, "password": test_password})
     token_data = login_resp.json()
     token = token_data.get("token") or token_data.get("accessToken")
+
+    if token:
+        logger.info("Successfully obtained Bearer token for API client session.")
+    else:
+        logger.error(f"Failed to obtain auth token. Login response: {login_resp.text}")
 
     session.headers.update({
         "Authorization": f"Bearer {token}",
@@ -64,8 +80,10 @@ def authenticated_page(page: Page) -> Page:
     username = os.environ.get("TEST_USERNAME")
     password = os.environ.get("TEST_PASSWORD")
     if not username or not password:
+        logger.error("TEST_USERNAME/TEST_PASSWORD not found in environment settings.")
         pytest.fail("TEST_USERNAME/TEST_PASSWORD not set in .env - can't log in for this test.")
 
+    logger.info(f"Navigating to login page: {LOGIN_URL}")
     page.goto(LOGIN_URL, wait_until="networkidle")
     page.locator("#email").fill(username)
     page.locator("#password").fill(password)
@@ -74,6 +92,7 @@ def authenticated_page(page: Page) -> Page:
     # Wait for redirect away from login page
     page.wait_for_url(lambda u: u != LOGIN_URL, timeout=10000)
     page.wait_for_load_state("networkidle")
+    logger.info(f"Successfully authenticated UI session. Redirected to: {page.url}")
 
     return page
 
@@ -90,8 +109,10 @@ def capture_browser_console(request):
     if page:
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
     yield
-    if console_errors and hasattr(request.node, "rep_call") and request.node.rep_call.failed:
-        print(f"\n[Browser Console Errors in {request.node.name}]:\n" + "\n".join(console_errors))
+    if console_errors:
+        node_logger = get_logger(request.node.name)
+        node_logger.warning(f"[Browser Console Errors in {request.node.name}]:\n" + "\n".join(console_errors))
+
 
 
 # ============================================================================
