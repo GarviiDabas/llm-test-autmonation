@@ -1,0 +1,122 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-primary: #0f172a;
+  --bg-card: #1e293b;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --accent-pass: #10b981;
+  --accent-fail: #ef4444;
+  --accent-skip: #f59e0b;
+  --accent-brand: #818cf8;
+  --border-color: #334155;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  background-color: var(--bg-primary) !important;
+  color: var(--text-main) !important;
+  margin: 0;
+  padding: 2rem !important;
+  min-width: 850px;
+}
+
+h1#title {
+  font-size: 2.2rem !important;
+  font-weight: 700 !important;
+  background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.025em;
+  margin-bottom: 0.5rem !important;
+}
+
+p {
+  color: var(--text-muted) !important;
+  font-size: 0.95rem;
+}
+
+/* Environment & Results Table */
+#environment, #results-table {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4) !important;
+  overflow: hidden !important;
+  margin-bottom: 2rem !important;
+  width: 100% !important;
+}
+
+#environment th, #results-table th {
+  background: #0f172a !important;
+  color: var(--text-muted) !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.05em;
+  padding: 14px 18px !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+#environment td, #results-table td {
+  padding: 14px 18px !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+  font-size: 0.9rem !important;
+}
+
+#results-table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+/* Status Badges */
+.col-result {
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  font-size: 0.8rem !important;
+  letter-spacing: 0.04em;
+}
+
+.passed .col-result, td.col-result.passed {
+  color: var(--accent-pass) !important;
+}
+
+.failed .col-result, .error .col-result, td.col-result.failed {
+  color: var(--accent-fail) !important;
+}
+
+.skipped .col-result, td.col-result.skipped {
+  color: var(--accent-skip) !important;
+}
+
+/* Log output / Traceback containers */
+.log {
+  background: #090d16 !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  padding: 16px !important;
+  font-family: 'ui-monospace', 'Cascadia Code', 'Fira Code', monospace !important;
+  font-size: 0.85rem !important;
+  white-space: pre-wrap !important;
+  line-height: 1.6 !important;
+}
+
+/* Links & Controls */
+a {
+  color: var(--accent-brand) !important;
+  text-decoration: none !important;
+}
+a:hover {
+  text-decoration: underline !important;
+}
+
+.summary {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 10px !important;
+  padding: 12px 18px !important;
+  margin-bottom: 1.5rem !important;
+  color: var(--text-main) !important;
+}
