@@ -12,6 +12,9 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from utils.logger import get_logger
+
+logger = get_logger("run_tests")
 
 
 def run_pytest(test_path: str, html_report_path: Path) -> int:
@@ -25,6 +28,8 @@ def run_pytest(test_path: str, html_report_path: Path) -> int:
     ]
     if css_path.exists():
         cmd.append(f"--css={css_path}")
+
+    logger.info(f"Starting test execution: {' '.join(cmd)}")
     result = subprocess.run(cmd)
     return result.returncode
 
@@ -40,9 +45,14 @@ def main():
 
     exit_code = run_pytest(args.path, html_report_path)
 
-    print(f"\n[+] HTML Report saved to: {html_report_path.resolve().as_posix()}")
+    if exit_code == 0:
+        logger.info(f"All tests completed successfully. HTML report saved to: {html_report_path.resolve().as_posix()}")
+    else:
+        logger.warning(f"Test run finished with exit code {exit_code}. HTML report saved to: {html_report_path.resolve().as_posix()}")
+
     sys.exit(exit_code)
 
 
 if __name__ == "__main__":
     main()
+
