@@ -151,55 +151,83 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
 
 
 
-def gather_api_context(openapi_url: str | None, out_dir: Path, spec_path: Path | None = None) -> dict:
+def gather_api_context(
+    openapi_url: str | None,
+    out_dir: Path,
+    spec_path: Path | None = None,
+) -> dict:
     """Fetch or load OpenAPI context."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    existing_path = out_dir / "api_context.json"
+    context_path = out_dir / "api_context.json"
 
     if not openapi_url:
-        if existing_path.exists():
-            return json.loads(existing_path.read_text())
+        if context_path.exists():
+            return json.loads(context_path.read_text())
+
         if spec_path and spec_path.exists():
             spec = yaml.safe_load(spec_path.read_text())
-            spec_endpoints = (spec.get("api") or {}).get("endpoints") or []
-            if spec_endpoints:
-                summary = {
-                    "source": f"built from {spec_path}'s api.endpoints list",
-                    "endpoint_count": len(spec_endpoints),
-                    "endpoints": spec_endpoints,
+            endpoints = (spec.get("api") or {}).get("endpoints") or []
+
+            if endpoints:
+                return _save_api_context(
+                    context_path,
+                    {
+                        "source": f"built from {spec_path}'s api.endpoints list",
+                        "endpoint_count": len(endpoints),
+                        "endpoints": endpoints,
+                    },
+                )
+
+        return _save_api_context(
+            context_path,
+            {"note": "No OpenAPI spec provided."},
+        )
+
+    response = requests.get(openapi_url, timeout=15)
+    response.raise_for_status()
+
+    spec = (
+        response.json()
+        if openapi_url.endswith(".json")
+        else yaml.safe_load(response.text)
+    )
+
+    endpoints = [
+        {
+            "path": path,
+            "method": method.upper(),
+            "summary": details.get("summary", ""),
+            "parameters": [
+                {
+                    "name": p.get("name"),
+                    "in": p.get("in"),
+                    "required": p.get("required", False),
                 }
-                existing_path.write_text(json.dumps(summary, indent=2))
-                return summary
+                for p in details.get("parameters", [])
+            ],
+            "request_body_required": bool(
+                details.get("requestBody", {}).get("required")
+            ),
+            "responses": list(details.get("responses", {})),
+        }
+        for path, methods in spec.get("paths", {}).items()
+        for method, details in methods.items()
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+    ]
 
-        summary = {"note": "No OpenAPI spec provided."}
-        existing_path.write_text(json.dumps(summary, indent=2))
-        return summary
+    return _save_api_context(
+        context_path,
+        {
+            "source": openapi_url,
+            "endpoint_count": len(endpoints),
+            "endpoints": endpoints,
+        },
+    )
 
-    resp = requests.get(openapi_url, timeout=15)
-    resp.raise_for_status()
-    raw = resp.text
-    spec = json.loads(raw) if openapi_url.endswith(".json") else yaml.safe_load(raw)
 
-    endpoints = []
-    for path, methods in spec.get("paths", {}).items():
-        for method, details in methods.items():
-            if method.lower() not in ("get", "post", "put", "patch", "delete"):
-                continue
-            endpoints.append({
-                "path": path,
-                "method": method.upper(),
-                "summary": details.get("summary", ""),
-                "parameters": [
-                    {"name": p.get("name"), "in": p.get("in"), "required": p.get("required", False)}
-                    for p in details.get("parameters", [])
-                ],
-                "request_body_required": bool(details.get("requestBody", {}).get("required")),
-                "responses": list(details.get("responses", {}).keys()),
-            })
-
-    summary = {"source": openapi_url, "endpoint_count": len(endpoints), "endpoints": endpoints}
-    existing_path.write_text(json.dumps(summary, indent=2))
-    return summary
+def _save_api_context(path: Path, data: dict) -> dict:
+    path.write_text(json.dumps(data, indent=2))
+    return data
 
 
 def main():
