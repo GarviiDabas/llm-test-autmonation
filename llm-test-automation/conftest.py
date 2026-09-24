@@ -148,6 +148,25 @@ def pytest_runtest_makereport(item, call):
     if call.when == "call":
         setattr(item, "rep_call", report)
 
+    # Format human-readable test name for Pytest HTML report
+    doc = item.obj.__doc__.strip().split("\n")[0] if (item.obj and item.obj.__doc__) else ""
+    class_name = item.cls.__name__ if item.cls else ""
+    pretty_class = re.sub(r"^Test", "", class_name)
+    pretty_class = re.sub(r"([A-Z])", r" \1", pretty_class).strip()
+
+    if doc:
+        if pretty_class:
+            report.nodeid = f"{pretty_class} - {doc}"
+        else:
+            report.nodeid = doc
+    else:
+        func_name = item.name.split("[")[0]
+        pretty_func = re.sub(r"^test_", "", func_name).replace("_", " ").title()
+        if pretty_class:
+            report.nodeid = f"{pretty_class} - {pretty_func}"
+        else:
+            report.nodeid = pretty_func
+
     extras = getattr(report, "extras", [])
 
     if report.when == "call" and report.failed:
@@ -186,7 +205,7 @@ def registered_user():
     if response.status_code not in [200, 201]:
         # Fallback registration / login
         pass
-    
+
     login_res = requests.post(f"{API_BASE_URL}/auth/login", json={
         "email": email,
         "password": password
@@ -195,5 +214,5 @@ def registered_user():
     if login_res.status_code == 200:
         data = login_res.json()
         token = data.get("token") or data.get("accessToken") or data.get("access_token")
-    
+
     return {"email": email, "password": password, "token": token}

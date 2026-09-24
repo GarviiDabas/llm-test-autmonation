@@ -115,6 +115,15 @@ coverage_spec:
       - category: "negative"
         scenario: "UI Login Negative: User enters invalid password on /login, clicks Sign In, and remains on /login page"
         expected: "URL remains /login, error message or form validation state is displayed"
+      - category: "edge"
+        scenario: "UI Login Edge Case Empty Fields: User submits /login form with empty email or password"
+        expected: "Form validation triggers, form is not submitted, and user remains on /login"
+      - category: "edge"
+        scenario: "UI Login Edge Case Malformed Email: User enters invalid email format on /login and clicks Sign In"
+        expected: "Browser HTML5 or custom email input validation error is displayed"
+      - category: "edge"
+        scenario: "UI Registration Edge Case Duplicate Email: User attempts registration with an already registered email"
+        expected: "Duplicate user error notification or alert is displayed"
       - category: "positive"
         scenario: "UI Navigation: User clicks #nav-home, #nav-events, and #nav-bookings header links"
         expected: "Browser navigates smoothly to respective page URLs (/ , /events , /bookings)"
@@ -139,6 +148,7 @@ coverage_spec:
       - category: "positive"
         scenario: "UI Logout Flow: User clicks #logout-btn from top navigation bar"
         expected: "User session ends and page redirects back to /login"
+
 constraints_and_guardrails:
   - "Do not submit real payments - use sandbox/test data only"
   - "Do not create more than 3 new user accounts per run"

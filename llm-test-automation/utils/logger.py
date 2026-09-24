@@ -22,7 +22,7 @@ AUTOMATION_LOG_FILE = LOG_DIR / "automation.log"
 def get_logger(name: str = "automation", log_file: Path = AUTOMATION_LOG_FILE, level: str = None) -> logging.Logger:
     """
     Returns a configured logger instance with both Console and File handlers.
-    
+
     :param name: Name of the logger instance (usually __name__ or module name)
     :param log_file: Path to log file
     :param level: Optional override log level (DEBUG, INFO, WARNING, ERROR)

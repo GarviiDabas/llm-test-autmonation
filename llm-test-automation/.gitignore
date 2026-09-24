@@ -1,4 +1,4 @@
-# --- Secrets ---
+# --- Secrets & Environment ---
 .env
 
 # --- Python ---
@@ -9,23 +9,21 @@ __pycache__/
 venv/
 *.egg-info/
 
-# --- Pytest / test tooling ---
+# --- Pytest & Test Execution Artifacts ---
 .pytest_cache/
 .pytest-report.json
-
-# --- Playwright ---
+reports/
 test-results/
 playwright-report/
 playwright/.cache/
 
-
+# --- Context, Logs & Manifests ---
 context/*.json
 context/*.png
 logs/
 tests/*_manifest.json
 
-
-# --- OS/editor noise ---
+# --- OS & Editor Noise ---
 .DS_Store
 Thumbs.db
 .vscode/

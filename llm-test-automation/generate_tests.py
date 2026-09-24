@@ -2,14 +2,12 @@ import argparse
 import json
 import os
 import re
-import time
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai import errors as genai_errors
 from utils.logger import get_logger
 from utils.constants import API_BASE_URL, UI_BASE_URL, LOGIN_URL
 
@@ -18,11 +16,9 @@ logger = get_logger("generate_tests")
 load_dotenv()
 
 
-MAX_RETRIES = 3
-RETRY_BACKOFF_SECONDS = 15  # doubles each retry: 15s, 30s, 60s
-
 MANIFEST_START, MANIFEST_END = "### MANIFEST_JSON_START", "### MANIFEST_JSON_END"
 CODE_START, CODE_END = "### TEST_CODE_START", "### TEST_CODE_END"
+
 
 def load_system_instruction() -> str:
     prompt_file = Path("config/system_prompt.txt")
@@ -45,8 +41,8 @@ Do not include any prose, explanation, or markdown fences outside those markers.
 
     return f"{base_instruction}\n\n{output_format}"
 
-SYSTEM_INSTRUCTION = load_system_instruction()
 
+SYSTEM_INSTRUCTION = load_system_instruction()
 
 
 def build_prompt(spec: dict, ui_context: dict | None, api_context: dict | None) -> str:
@@ -73,22 +69,10 @@ def call_gemini(prompt: str, model_name: str) -> str:
         ),
     )
 
-    backoff = RETRY_BACKOFF_SECONDS
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = client.models.generate_content(
-                model=model_name, contents=[prompt], config=config,
-            )
-            return response.text
-        except genai_errors.ServerError as e:
-            # 503/overload and similar are transient - worth retrying.
-            # 4xx-style client errors (bad key, bad request) are not - fail fast.
-            if attempt == MAX_RETRIES:
-                raise
-            print(f"  Gemini server error ({e}). Retrying in {backoff}s "
-                  f"(attempt {attempt}/{MAX_RETRIES})...")
-            time.sleep(backoff)
-            backoff *= 2
+    response = client.models.generate_content(
+        model=model_name, contents=[prompt], config=config,
+    )
+    return response.text
 
 
 def sanitize_generated_code(code: str) -> str:

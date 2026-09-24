@@ -111,7 +111,7 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
 
         # Collect elements across current page
         elements = await page.evaluate(COLLECT_JS)
-        
+
         # Navigate to /events and collect
         try:
             await page.goto("https://eventhub.rahulshettyacademy.com/events", wait_until="networkidle")
