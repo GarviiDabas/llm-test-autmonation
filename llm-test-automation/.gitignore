@@ -28,3 +28,6 @@ tests/*_manifest.json
 Thumbs.db
 .vscode/
 .idea/
+
+tests/test_*.py
+.env

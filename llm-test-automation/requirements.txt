@@ -1,4 +1,4 @@
-# Core
+# Core runtime dependencies
 google-genai>=1.0.0
 playwright>=1.47.0
 pytest>=8.3.0
@@ -7,6 +7,3 @@ pytest-html>=4.1.0
 PyYAML>=6.0
 requests>=2.32.0
 python-dotenv>=1.0.0
-rich>=13.7.0
-mcp>=1.0.0
-pre-commit>=3.8.0

@@ -14,7 +14,14 @@ import requests
 from dotenv import load_dotenv
 from playwright.sync_api import Page
 from utils.logger import get_logger
-from utils.constants import API_BASE_URL, UI_BASE_URL, LOGIN_URL
+from utils.constants import (
+    API_BASE_URL,
+    UI_BASE_URL,
+    LOGIN_URL,
+    DEFAULT_TEST_PASSWORD,
+    PROJECT_NAME,
+    REPORT_TITLE
+)
 
 logger = get_logger("conftest")
 
@@ -58,11 +65,11 @@ def api_client(api_base_url: str) -> requests.Session:
     token_data = login_resp.json()
     token = token_data.get("token") or token_data.get("accessToken")
 
-    if token:
-        logger.info("Successfully obtained Bearer token for API client session.")
-    else:
-        logger.error(f"Failed to obtain auth token. Login response: {login_resp.text}")
-
+    if not token:
+        pytest.fail(
+            f"api_client fixture: failed to obtain auth token. "
+            f"Login status: {login_resp.status_code}. Response: {login_resp.text}"
+        )
     session.headers.update({
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -196,23 +203,28 @@ def pytest_runtest_makereport(item, call):
 def registered_user():
     """Fixture to create a unique test user for API tests."""
     email = f"test_{uuid.uuid4().hex[:6]}@example.com"
-    password = "Password123!"
-    response = requests.post(f"{API_BASE_URL}/auth/register", json={
-        "email": email,
-        "password": password
-    })
-    # If registration returns 200/201 or if user already exists, login to get token
-    if response.status_code not in [200, 201]:
-        # Fallback registration / login
-        pass
+    password = DEFAULT_TEST_PASSWORD
 
-    login_res = requests.post(f"{API_BASE_URL}/auth/login", json={
-        "email": email,
-        "password": password
-    })
-    token = ""
-    if login_res.status_code == 200:
-        data = login_res.json()
+    reg_res = requests.post(f"{API_BASE_URL}/auth/register", json={"email": email, "password": password})
+
+    if reg_res.status_code in [200, 201]:
+        data = reg_res.json()
         token = data.get("token") or data.get("accessToken") or data.get("access_token")
+        if token:
+            return {"email": email, "password": password, "token": token}
+
+    # Fallback: attempt login (user may already exist)
+    login_res = requests.post(f"{API_BASE_URL}/auth/login", json={"email": email, "password": password})
+    if login_res.status_code != 200:
+        pytest.fail(
+            f"registered_user fixture: registration returned {reg_res.status_code} "
+            f"and login fallback returned {login_res.status_code}. "
+            f"Cannot proceed. Login response: {login_res.text}"
+        )
+
+    data = login_res.json()
+    token = data.get("token") or data.get("accessToken") or data.get("access_token")
+    if not token:
+        pytest.fail(f"registered_user fixture: login succeeded but no token in response: {data}")
 
     return {"email": email, "password": password, "token": token}

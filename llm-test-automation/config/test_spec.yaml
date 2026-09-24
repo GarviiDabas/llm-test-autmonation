@@ -1,179 +1,26 @@
 # ---------------------------------------------------------------------------
-# Test Spec: Structured prompt and domain specification for test generation.
-# Adheres to Single Responsibility Principle (SRP) by separating Concerns:
-# Project Metadata, Framework Config, Engineering Rules, Coverage Spec,
-# Guardrails, API Manifest, and Output Config.
+# test_spec.yaml
+# Minimal configuration.
+# The LLM autonomously derives test scenarios from dynamically gathered UI + API context.
+# Code generation rules live in config/system_prompt.txt — NOT here.
 # ---------------------------------------------------------------------------
 
-project_metadata:
-  project_name: "eventhub"
-  display_name: "EventHub Test Automation Suite"
+project:
+  name: "eventhub"
+  display_name: "EventHub — Discover & Book Events"
   environment: "staging"
-  target_urls:
-    ui_base_url_env: "UI_BASE_URL"
-    login_url_env: "LOGIN_URL"
-    api_base_url_env: "API_BASE_URL"
 
-  auth_credentials:
-    type: "form_login"
-    username_env: "TEST_USERNAME"
-    password_env: "TEST_PASSWORD"
+target:
+  ui_url:      "https://eventhub.rahulshettyacademy.com"
+  login_url:   "https://eventhub.rahulshettyacademy.com/login"
+  api_url:     "https://api.eventhub.rahulshettyacademy.com/api"
 
-framework_config:
-  ui_framework: "playwright-python"
-  api_framework: "requests+pytest"
-  test_runner: "pytest"
-  assertion_style: "pytest+expect"
+credentials:
+  username_env: "TEST_USERNAME"
+  password_env: "TEST_PASSWORD"
 
-code_generation_rules:
-  playwright_rules:
-    - "This is PYTHON Playwright. All assertions MUST use snake_case: to_be_visible(), to_have_url(), to_have_value(), to_be_enabled(), to_be_disabled(). NEVER use camelCase JS-style method names like toBeVisible() or toHaveURL()."
-    - "`page` is a fixture, not an importable name. NEVER write `from playwright.sync_api import page`. The only valid imports from playwright.sync_api are `Page` (capital P for type hints) and `expect`."
-    - "Use re.compile(...) when asserting URLs or button text regexes: expect(page).to_have_url(re.compile(r'/dashboard'))."
-
-  locator_strategy:
-    - "Strict locator preference order: data-testid > role/aria-label > id > name > text."
-    - "If a locator appears multiple times on a page (e.g. repeated cards/items), disambiguate using .filter(has_text='...') or .nth(index)."
-    - "Never guess CSS selectors or element IDs that are not present in the supplied UI context."
-
-  api_rules:
-    - "For POST /bookings requests, always provide all required fields: customerName, customerEmail, customerPhone, quantity, and eventId."
-    - "Obtain a fresh Bearer token via POST /auth/register or POST /auth/login for endpoints requiring auth."
-    - "Assert HTTP status code AND response payload structure for every endpoint call."
-
-  constants_and_security:
-    - "All base URLs, default headers, endpoints, and credentials MUST be imported from `utils.constants` or supplied via `conftest.py` fixtures."
-    - "Do not hardcode unencrypted secrets, passwords, or raw hostnames inside individual test functions."
-
-  naming_conventions:
-    - "All test files and manifests must use PEP 8 snake_case naming (e.g. `test_eventhub.py`, `eventhub_manifest.json`, `constants.py`)."
-    - "Test functions must start with `test_` followed by lower_snake_case describing category and outcome (e.g., `test_auth_login_positive_valid_credentials`, `test_auth_login_negative_invalid_password`, `test_bookings_edge_empty_quantity`)."
-
-  code_quality:
-    - "Group related tests into logical classes named Test<Feature> (e.g., TestAuthAPI, TestEventsAPI, TestBookingsAPI, TestEventHubUI)."
-    - "Write clear, descriptive docstrings for every test function stating what is verified and expected behavior."
-    - "Use unique emails and identifiers via `uuid.uuid4().hex[:6]` to ensure tests remain completely independent."
-
-coverage_spec:
-  level: "comprehensive"
-  suites:
-    auth_api:
-      - category: "positive"
-        scenario: "POST /auth/register creates a new user account with valid data"
-        expected: "Status 200 or 201 with success confirmation"
-      - category: "positive"
-        scenario: "POST /auth/login authenticates valid user"
-        expected: "Status 200 and returns a valid Bearer token"
-      - category: "positive"
-        scenario: "GET /auth/me returns user profile when authenticated with Bearer token"
-        expected: "Status 200 with success: true, user.userId, and user.email"
-      - category: "negative"
-        scenario: "POST /auth/login rejects wrong password"
-        expected: "Status 400 or 401 with error message"
-      - category: "negative"
-        scenario: "GET /auth/me rejects unauthenticated request missing Authorization header"
-        expected: "Status 401 Unauthorized"
-      - category: "edge"
-        scenario: "POST /auth/login handles empty email and password payloads"
-        expected: "Status 400 or 422 validation failure"
-
-    events_api:
-      - category: "positive"
-        scenario: "GET /events returns list of available events"
-        expected: "Status 200 and a non-empty array of event objects"
-      - category: "positive"
-        scenario: "GET /events/{id} returns single event details for valid event ID"
-        expected: "Status 200 with event title, id, and location"
-      - category: "negative"
-        scenario: "GET /events/{id} returns 404 for non-existent event ID"
-        expected: "Status 404 Not Found"
-
-    bookings_api:
-      - category: "positive"
-        scenario: "POST /bookings creates a booking with all required fields (customerName, customerEmail, customerPhone, quantity, eventId)"
-        expected: "Status 200 or 201 returning booking confirmation"
-      - category: "positive"
-        scenario: "GET /bookings/ref/{ref} retrieves booking details by valid reference"
-        expected: "Status 200 returning booking record"
-      - category: "negative"
-        scenario: "POST /bookings rejects request with missing required field customerEmail"
-        expected: "Status 400 or 422 Validation Error"
-      - category: "negative"
-        scenario: "POST /bookings rejects invalid or nonexistent event ID"
-        expected: "Status 400, 404, or 422"
-      - category: "edge"
-        scenario: "POST /bookings handles zero quantity or invalid negative quantity"
-        expected: "Status 400 or 422 error"
-      - category: "edge"
-        scenario: "GET /bookings/ref/{ref} handles non-existent or malformed booking reference"
-        expected: "Status 404 Not Found"
-
-    ui_flows:
-      - category: "positive"
-        scenario: "UI Login Positive: User logs in via /login with valid credentials, gets redirected to home page, and sees navbar elements (#user-email-display, #logout-btn)"
-        expected: "URL is / or /events, #logout-btn and #user-email-display are visible"
-      - category: "negative"
-        scenario: "UI Login Negative: User enters invalid password on /login, clicks Sign In, and remains on /login page"
-        expected: "URL remains /login, error message or form validation state is displayed"
-      - category: "edge"
-        scenario: "UI Login Edge Case Empty Fields: User submits /login form with empty email or password"
-        expected: "Form validation triggers, form is not submitted, and user remains on /login"
-      - category: "edge"
-        scenario: "UI Login Edge Case Malformed Email: User enters invalid email format on /login and clicks Sign In"
-        expected: "Browser HTML5 or custom email input validation error is displayed"
-      - category: "edge"
-        scenario: "UI Registration Edge Case Duplicate Email: User attempts registration with an already registered email"
-        expected: "Duplicate user error notification or alert is displayed"
-      - category: "positive"
-        scenario: "UI Navigation: User clicks #nav-home, #nav-events, and #nav-bookings header links"
-        expected: "Browser navigates smoothly to respective page URLs (/ , /events , /bookings)"
-      - category: "positive"
-        scenario: "UI Events Search & Filter: User types query in search input on /events and verifies filtered event cards"
-        expected: "Event cards update dynamically according to search keyword"
-      - category: "negative"
-        scenario: "UI Events Search Non-existent: User types non-matching search term and verifies empty search result view"
-        expected: "Zero event cards or 'No events found' empty state indicator displayed"
-      - category: "positive"
-        scenario: "UI Event Detail View: User clicks an event card or 'View Details' link and navigates to event detail page"
-        expected: "URL changes to /events/:id and event details (description, price, date) are visible"
-      - category: "positive"
-        scenario: "UI Booking Submission: User fills out booking form (name, email, phone, quantity) on event detail page and submits"
-        expected: "Booking confirmation alert or reference code is displayed"
-      - category: "negative"
-        scenario: "UI Booking Form Validation: User submits booking form without filling mandatory fields"
-        expected: "Validation error styling or error message appears and form is not submitted"
-      - category: "positive"
-        scenario: "UI My Bookings View: User navigates to /bookings tab and verifies past booking records"
-        expected: "My Bookings table/cards render customer booking details"
-      - category: "positive"
-        scenario: "UI Logout Flow: User clicks #logout-btn from top navigation bar"
-        expected: "User session ends and page redirects back to /login"
-
-constraints_and_guardrails:
-  - "Do not submit real payments - use sandbox/test data only"
-  - "Do not create more than 3 new user accounts per run"
-  - "Do not delete or modify events created by other users"
-  - "Do not permanently delete/cancel bookings unless the test created them itself"
-  - "All destructive actions must run against staging only, never production"
-  - "Treat admin flows (creating/editing events via admin UI) as out of scope for this smoke suite"
-
-api_endpoints_manifest:
-  base_url: "https://api.eventhub.rahulshettyacademy.com/api"
-  endpoints:
-    - {path: "/auth/register", method: "POST", auth_required: false}
-    - {path: "/auth/login", method: "POST", auth_required: false}
-    - {path: "/auth/me", method: "GET", auth_required: true,
-       note: "CONFIRMED response shape: {\"success\": true, \"user\": {\"userId\": ..., \"email\": ...}} - id field is userId not id."}
-    - {path: "/events", method: "GET", auth_required: true,
-       note: "CONFIRMED: requires Bearer token."}
-    - {path: "/events/{id}", method: "GET", auth_required: true,
-       note: "CONFIRMED: requires Bearer token."}
-    - {path: "/bookings", method: "POST", auth_required: true,
-       note: "CONFIRMED required payload: {eventId, customerName, customerEmail, customerPhone, quantity}."}
-    - {path: "/bookings/ref/{ref}", method: "GET", auth_required: false}
-    - {path: "/bookings/{id}", method: "DELETE", auth_required: true}
-
-output_spec:
-  output_dir: "tests/"
-  test_file_pattern: "test_{project_name}.py"
-  manifest_pattern: "{project_name}_manifest.json"
+constraints:
+  - "Admin UI flows (create, edit, delete events) are out of scope for this suite"
+  - "For payment, event details, booking details use test and sandbox data"
+  - "All destructive test actions must target staging only — never production"
+  - "Do not modify or delete events or bookings created by other users"
