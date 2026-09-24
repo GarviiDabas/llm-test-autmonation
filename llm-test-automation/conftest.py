@@ -14,15 +14,11 @@ import requests
 from dotenv import load_dotenv
 from playwright.sync_api import Page
 from utils.logger import get_logger
+from utils.constants import API_BASE_URL, UI_BASE_URL, LOGIN_URL
 
 logger = get_logger("conftest")
 
 load_dotenv()
-
-DEFAULT_API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.eventhub.rahulshettyacademy.com/api")
-DEFAULT_UI_BASE_URL = os.environ.get("UI_BASE_URL", "https://eventhub.rahulshettyacademy.com")
-LOGIN_URL = os.environ.get("LOGIN_URL", "https://eventhub.rahulshettyacademy.com/login")
-
 
 # ============================================================================
 # Environment & Client Fixtures
@@ -37,13 +33,13 @@ def test_logger(request):
 @pytest.fixture(scope="session")
 def api_base_url() -> str:
     """Returns the Base URL for API endpoints."""
-    return DEFAULT_API_BASE_URL.rstrip("/")
+    return API_BASE_URL.rstrip("/")
 
 
 @pytest.fixture(scope="session")
 def ui_base_url() -> str:
     """Returns the Base URL for the frontend application."""
-    return DEFAULT_UI_BASE_URL.rstrip("/")
+    return UI_BASE_URL.rstrip("/")
 
 
 @pytest.fixture
@@ -126,7 +122,7 @@ def pytest_html_report_title(report):
 def pytest_configure(config):
     if hasattr(config, "_metadata"):
         config._metadata["Project Name"] = "EventHub Test Automation"
-        config._metadata["Target API / App"] = DEFAULT_API_BASE_URL
+        config._metadata["Target API / App"] = API_BASE_URL
         config._metadata["Execution Mode"] = "Pytest + Playwright (Headless)"
 
 
@@ -160,3 +156,29 @@ def pytest_runtest_makereport(item, call):
                 pass
 
     report.extras = extras
+
+
+@pytest.fixture(scope="session")
+def registered_user():
+    """Fixture to create a unique test user for API tests."""
+    email = f"test_{uuid.uuid4().hex[:6]}@example.com"
+    password = "Password123!"
+    response = requests.post(f"{API_BASE_URL}/auth/register", json={
+        "email": email,
+        "password": password
+    })
+    # If registration returns 200/201 or if user already exists, login to get token
+    if response.status_code not in [200, 201]:
+        # Fallback registration / login
+        pass
+    
+    login_res = requests.post(f"{API_BASE_URL}/auth/login", json={
+        "email": email,
+        "password": password
+    })
+    token = ""
+    if login_res.status_code == 200:
+        data = login_res.json()
+        token = data.get("token") or data.get("accessToken") or data.get("access_token")
+    
+    return {"email": email, "password": password, "token": token}

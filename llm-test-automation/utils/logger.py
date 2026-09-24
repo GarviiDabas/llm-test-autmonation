@@ -52,9 +52,10 @@ def get_logger(name: str = "automation", log_file: Path = AUTOMATION_LOG_FILE, l
         backupCount=3,
         encoding="utf-8"
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
 
     logger.propagate = False
 

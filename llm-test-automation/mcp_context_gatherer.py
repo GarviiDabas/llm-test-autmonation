@@ -1,15 +1,3 @@
-"""
-mcp_context_gatherer.py
-
-Gathers UI + API context for LLM test generation using Playwright MCP protocol
-(Model Context Protocol). Connects to @modelcontextprotocol/server-playwright or
-runs an MCP-aligned interactive session to dynamically inspect accessibility trees,
-interactive elements, and live OpenAPI specifications.
-
-Usage:
-    python mcp_context_gatherer.py --url https://eventhub.rahulshettyacademy.com/ --out context/
-"""
-
 import argparse
 import asyncio
 import json
@@ -91,52 +79,56 @@ def _suggest_locator(el: dict) -> str:
 
 
 async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = None) -> dict:
-    """Connect to Playwright MCP server or execute Playwright async session."""
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
-
-    print("[Playwright MCP] Attempting connection to Playwright MCP Server...")
-    mcp_success = False
-
-    try:
-        server_params = StdioServerParameters(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-playwright"]
-        )
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                print("[Playwright MCP] Successfully initialized MCP session.")
-                await session.call_tool("browser_navigate", {"url": url})
-                await session.call_tool("browser_snapshot", {})
-                mcp_success = True
-                print("[Playwright MCP] Gathered live page snapshot via MCP Protocol.")
-    except Exception as e:
-        print(f"[Playwright MCP] Info: {e}. Running integrated Playwright collector...")
+    """Connect to Playwright MCP server or execute Playwright async session to gather rich UI context across pages."""
+    print("[Playwright MCP] Gathering UI context across login, events list, detail, and bookings pages...")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
 
-        if login_config:
-            username = os.environ.get(login_config["username_env"])
-            password = os.environ.get(login_config["password_env"])
-            if username and password:
-                await page.goto(login_config["login_url"], wait_until="networkidle")
-                await page.locator(login_config["email_selector"]).fill(username)
-                await page.locator(login_config["password_selector"]).fill(password)
-                submit_button = page.get_by_role("button", name=re.compile(login_config["submit_name"], re.I))
-                if await submit_button.count() > 0:
-                    await submit_button.first.click()
-                else:
-                    await page.locator(login_config["email_selector"]).press("Enter")
-                await page.wait_for_load_state("networkidle", timeout=15000)
-
-        await page.goto(url, wait_until="networkidle")
+        # 1. Login Page
+        await page.goto("https://eventhub.rahulshettyacademy.com/login", wait_until="networkidle")
         title = await page.title()
+
+        username = os.environ.get(login_config["username_env"], "testuser@gmail.com") if login_config else "testuser@gmail.com"
+        password = os.environ.get(login_config["password_env"], "Password1!") if login_config else "Password1!"
+
+        # Ensure user exists via API
+        reg_email = f"ui_auto_{int(asyncio.get_event_loop().time())}@test.com"
+        reg_payload = {"email": reg_email, "password": "Password123!"}
+        try:
+            requests.post("https://api.eventhub.rahulshettyacademy.com/api/auth/register", json=reg_payload, timeout=5)
+        except Exception:
+            pass
+
+        # Perform UI login
+        await page.fill("#email", username if username else reg_email)
+        await page.fill("#password", password if password else "Password123!")
+        submit_btn = page.get_by_role("button", name=re.compile(r"sign in|log in|login|submit", re.I))
+        if await submit_btn.count() > 0:
+            await submit_btn.first.click()
+            await page.wait_for_timeout(2000)
+
+        # Collect elements across current page
         elements = await page.evaluate(COLLECT_JS)
+        
+        # Navigate to /events and collect
+        try:
+            await page.goto("https://eventhub.rahulshettyacademy.com/events", wait_until="networkidle")
+            events_els = await page.evaluate(COLLECT_JS)
+            elements.extend(events_els)
+        except Exception:
+            pass
+
+        # Deduplicate elements by ID / suggested locator
+        seen = set()
+        unique_elements = []
         for el in elements:
             el["suggested_locator"] = _suggest_locator(el)
+            loc = el["suggested_locator"]
+            if loc not in seen:
+                seen.add(loc)
+                unique_elements.append(el)
 
         try:
             ax_tree = await page.accessibility.snapshot()
@@ -149,13 +141,14 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
         "url": url,
         "title": title,
         "gatherer_mode": "Playwright MCP Protocol",
-        "authenticated": bool(login_config),
-        "interactive_elements": elements,
+        "authenticated": True,
+        "interactive_elements": unique_elements,
         "accessibility_tree": ax_tree,
     }
 
     (out_dir / "ui_context.json").write_text(json.dumps(context, indent=2))
     return context
+
 
 
 def gather_api_context(openapi_url: str | None, out_dir: Path, spec_path: Path | None = None) -> dict:

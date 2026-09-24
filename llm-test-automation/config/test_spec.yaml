@@ -10,9 +10,10 @@ project_metadata:
   display_name: "EventHub Test Automation Suite"
   environment: "staging"
   target_urls:
-    ui_base_url: "https://eventhub.rahulshettyacademy.com"
-    login_url: "https://eventhub.rahulshettyacademy.com/login"
-    api_base_url: "https://api.eventhub.rahulshettyacademy.com/api"
+    ui_base_url_env: "UI_BASE_URL"
+    login_url_env: "LOGIN_URL"
+    api_base_url_env: "API_BASE_URL"
+
   auth_credentials:
     type: "form_login"
     username_env: "TEST_USERNAME"
@@ -40,46 +41,93 @@ code_generation_rules:
     - "Obtain a fresh Bearer token via POST /auth/register or POST /auth/login for endpoints requiring auth."
     - "Assert HTTP status code AND response payload structure for every endpoint call."
 
+  constants_and_security:
+    - "All base URLs, default headers, endpoints, and credentials MUST be imported from `utils.constants` or supplied via `conftest.py` fixtures."
+    - "Do not hardcode unencrypted secrets, passwords, or raw hostnames inside individual test functions."
+
+  naming_conventions:
+    - "All test files and manifests must use PEP 8 snake_case naming (e.g. `test_eventhub.py`, `eventhub_manifest.json`, `constants.py`)."
+    - "Test functions must start with `test_` followed by lower_snake_case describing category and outcome (e.g., `test_auth_login_positive_valid_credentials`, `test_auth_login_negative_invalid_password`, `test_bookings_edge_empty_quantity`)."
+
   code_quality:
     - "Group related tests into logical classes named Test<Feature> (e.g., TestAuthAPI, TestEventsAPI, TestBookingsAPI, TestEventHubUI)."
     - "Write clear, descriptive docstrings for every test function stating what is verified and expected behavior."
     - "Use unique emails and identifiers via `uuid.uuid4().hex[:6]` to ensure tests remain completely independent."
 
-coverage_spec:
-  level: "smoke"
-  suites:
-    auth_api:
-      - scenario: "POST /auth/register creates a new user account"
-        expected: "Status 200 or 201 with success confirmation"
-      - scenario: "POST /auth/login authenticates valid user"
-        expected: "Status 200 and returns a valid Bearer token"
-      - scenario: "POST /auth/login rejects wrong password"
-        expected: "Status 400 or 401 with error message"
-      - scenario: "GET /auth/me returns user profile when authenticated"
-        expected: "Status 200 with success: true, user.userId, and user.email"
-      - scenario: "GET /auth/me rejects unauthenticated request"
-        expected: "Status 401 Unauthorized"
+# coverage_spec:
+#   level: "comprehensive"
+#   suites:
+#     auth_api:
+#       - category: "positive"
+#         scenario: "POST /auth/register creates a new user account with valid data"
+#         expected: "Status 200 or 201 with success confirmation"
+#       - category: "positive"
+#         scenario: "POST /auth/login authenticates valid user"
+#         expected: "Status 200 and returns a valid Bearer token"
+#       - category: "positive"
+#         scenario: "GET /auth/me returns user profile when authenticated with Bearer token"
+#         expected: "Status 200 with success: true, user.userId, and user.email"
+#       - category: "negative"
+#         scenario: "POST /auth/login rejects wrong password"
+#         expected: "Status 400 or 401 with error message"
+#       - category: "negative"
+#         scenario: "GET /auth/me rejects unauthenticated request missing Authorization header"
+#         expected: "Status 401 Unauthorized"
+#       - category: "edge"
+#         scenario: "POST /auth/login handles empty email and password payloads"
+#         expected: "Status 400 or 422 validation failure"
 
-    events_api:
-      - scenario: "GET /events returns list of available events"
-        expected: "Status 200 and a non-empty array of event objects"
-      - scenario: "GET /events/{id} returns single event details"
-        expected: "Status 200 with event title, id, and location"
+#     events_api:
+#       - category: "positive"
+#         scenario: "GET /events returns list of available events"
+#         expected: "Status 200 and a non-empty array of event objects"
+#       - category: "positive"
+#         scenario: "GET /events/{id} returns single event details for valid event ID"
+#         expected: "Status 200 with event title, id, and location"
+#       - category: "negative"
+#         scenario: "GET /events/{id} returns 404 for non-existent event ID"
+#         expected: "Status 404 Not Found"
 
-    bookings_api:
-      - scenario: "POST /bookings creates a booking for available event"
-        expected: "Status 200 or 201 when customerName, customerEmail, customerPhone, quantity, and eventId are provided"
-      - scenario: "GET /bookings/ref/{ref} retrieves booking by reference"
-        expected: "Status 200 returning booking record"
-      - scenario: "DELETE /bookings/{id} cancels an existing booking"
-        expected: "Status 200 or 204"
-      - scenario: "POST /bookings rejects invalid or nonexistent event ID"
-        expected: "Status 400, 404, or 422"
+#     bookings_api:
+#       - category: "positive"
+#         scenario: "POST /bookings creates a booking with all required fields (customerName, customerEmail, customerPhone, quantity, eventId)"
+#         expected: "Status 200 or 201 returning booking confirmation"
+#       - category: "positive"
+#         scenario: "GET /bookings/ref/{ref} retrieves booking details by valid reference"
+#         expected: "Status 200 returning booking record"
+#       - category: "negative"
+#         scenario: "POST /bookings rejects request with missing required field customerEmail"
+#         expected: "Status 400 or 422 Validation Error"
+#       - category: "negative"
+#         scenario: "POST /bookings rejects invalid or nonexistent event ID"
+#         expected: "Status 400, 404, or 422"
+#       - category: "edge"
+#         scenario: "POST /bookings handles zero quantity or invalid negative quantity"
+#         expected: "Status 400 or 422 error"
+#       - category: "edge"
+#         scenario: "GET /bookings/ref/{ref} handles non-existent or malformed booking reference"
+#         expected: "Status 404 Not Found"
 
-    ui_flows:
-      - scenario: "Login page loads successfully with interactive elements"
-        expected: "Email input, password input, and Sign In button are visible"
-
+#     ui_flows:
+#       - category: "positive"
+#         scenario: "UI Login Positive: User logs in via /login with valid credentials, gets redirected to home page, and sees navbar elements (#user-email-display, #logout-btn)"
+#         expected: "URL is / or /events, #logout-btn and #user-email-display are visible"
+#       - category: "negative"
+#         scenario: "UI Login Negative: User enters invalid password on /login, clicks Sign In, and remains on /login page"
+#         expected: "URL remains /login, error message or form validation state is displayed"
+#       - category: "positive"
+#         scenario: "UI Events Navigation & Search: User navigates to /events, types query in search input, and verifies event cards are filtered"
+#         expected: "#event-card items are visible and filtered based on search input"
+#       - category: "positive"
+#         scenario: "UI Booking Flow: User opens event detail page, fills customer name (#customerName), email (#customer-email), phone (#phone), and clicks #confirm-booking"
+#         expected: "Booking confirmation message or success alert is displayed"
+#       - category: "positive"
+#         scenario: "UI Navbar Navigation: User clicks #nav-home, #nav-events, and #nav-bookings header links"
+#         expected: "Browser navigates to the respective page URLs"
+#       - category: "positive"
+#         scenario: "UI Logout: User clicks #logout-btn, session ends, and user is redirected to /login"
+#         expected: "URL becomes /login and #email input is visible"
+#
 constraints_and_guardrails:
   - "Do not submit real payments - use sandbox/test data only"
   - "Do not create more than 3 new user accounts per run"
