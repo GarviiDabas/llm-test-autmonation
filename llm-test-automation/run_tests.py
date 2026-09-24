@@ -33,6 +33,16 @@ def run_pytest(test_path: str, html_report_path: Path, headed: bool = False) -> 
 
     logger.info(f"Starting test execution: {' '.join(cmd)}")
     result = subprocess.run(cmd)
+
+    # Post-process report to ensure lang="en" attribute is present for WCAG / Sonar compliance
+    if html_report_path.exists():
+        try:
+            content = html_report_path.read_text(encoding="utf-8")
+            if "<html>" in content:
+                html_report_path.write_text(content.replace("<html>", '<html lang="en">', 1), encoding="utf-8")
+        except Exception:
+            pass
+
     return result.returncode
 
 

@@ -8,10 +8,29 @@ Rules:
 - UI AUTHENTICATION & REDIRECTS: EventHub automatically redirects unauthenticated browser sessions from UI_BASE_URL (/) or protected pages (/events, /bookings) to /login. Every UI test method in TestEventHubUI MUST begin by either: (1) Registering/obtaining valid credentials via API, navigating to LOGIN_URL, filling email (#email) and password (#password), clicking 'Sign In', and waiting for navigation before asserting elements on protected pages, OR (2) Verifying unauthenticated /login page elements directly (#email, #password, 'Sign In' button). NEVER navigate directly to UI_BASE_URL or protected pages without performing login first.
 - When you need a unique value (e.g. a unique test email), use the simplest possible expression: `int(time.time())` or `uuid.uuid4().hex[:8]`. Do not write nested or chained expressions you have not double-checked are syntactically valid Python - a malformed expression breaks the entire file, not just one test.
 - CONSTANTS & SECURITY: ALWAYS import project constants (`API_BASE_URL`, `UI_BASE_URL`, `LOGIN_URL`, etc.) directly from `utils.constants` (e.g. `from utils.constants import API_BASE_URL, UI_BASE_URL`) or rely on fixtures from `conftest.py`. Use `API_BASE_URL` for all HTTP request URLs (e.g. `f"{API_BASE_URL}/events"`) and `UI_BASE_URL` / `LOGIN_URL` for all Playwright browser navigations (e.g. `page.goto(f"{UI_BASE_URL}/events")`). NEVER hardcode raw environment base URLs, localhost strings, or sensitive credentials directly inside test methods.
-- COMPREHENSIVE TEST COVERAGE: You MUST generate tests covering 3 categories:
-  1. POSITIVE TESTS (Happy Paths): Valid credentials, successful creation/queries, expected HTTP 200/201.
-  2. NEGATIVE TESTS (Failure Paths): Invalid/wrong credentials, unauthorized requests without Bearer tokens (HTTP 401), invalid or missing required payload parameters (HTTP 400/422), nonexistent IDs/routes (HTTP 404).
-  3. EDGE CASES (Boundary Conditions): Empty string values, zero/negative quantities, boundary payload lengths, non-existent UUIDs, duplicate submissions, special characters.
+- COMPREHENSIVE TEST COVERAGE: You MUST generate tests covering both API endpoints AND extensive UI interactions across multiple user scenarios:
+  1. POSITIVE TESTS (Happy Paths): Valid credentials, successful creation/queries, expected HTTP 200/201, successful UI logins, navigation, search, and booking completions.
+  2. NEGATIVE TESTS (Failure Paths): Invalid/wrong credentials, unauthorized requests without Bearer tokens (HTTP 401), invalid or missing required payload parameters (HTTP 400/422), nonexistent IDs/routes (HTTP 404), UI login failures with invalid passwords, and UI form validation errors.
+  3. EDGE CASES (Boundary Conditions): Empty string values, zero/negative quantities, boundary payload lengths, non-existent UUIDs, duplicate submissions, special characters, and searching non-matching items in UI.
+
+- EXTENDED UI TESTING SCENARIOS & REQUIREMENTS:
+  You MUST include comprehensive, diverse UI test scenarios in the `TestEventHubUI` class (or dedicated UI test classes):
+  1. UI Authentication Flows:
+     - Positive Login & Redirect: Log in with valid credentials via UI form, verify redirect away from /login, and check that user email display (`#user-email-display`) and logout button are visible.
+     - Negative Login: Enter invalid password or non-existent email, submit form, verify user remains on `/login` and error message/alert is visible.
+     - Logout Flow: Click logout button (`#logout-btn` / `get_by_test_id("logout-btn")`), verify redirect back to `/login` and session cleared.
+  2. UI Navigation & Page Transitions:
+     - Header Links Navigation: Click header navigation links (`#nav-home`, `#nav-events`, `#nav-bookings`), asserting URL transitions (`/`, `/events`, `/bookings`) and visible page headers.
+  3. UI Events Search & Card Interactions:
+     - Search & Filter: Type valid event title in search input, assert filtered `#event-card` elements match query.
+     - Empty Search Results: Type non-matching search query, verify zero event cards or "No events found" message appears.
+     - View Details Transition: Click an event card or "View Details" button, verifying navigation to `/events/:id` and event detail content visibility.
+  4. UI Booking Creation & Validation:
+     - Complete Booking Flow: Navigate to an event detail page, fill out customer name (`#customerName` / `#customer-name`), email (`#customer-email`), phone (`#phone`), quantity, click confirm booking, and verify confirmation message / booking reference displayed.
+     - Form Validation: Submit booking form with empty/missing required fields, asserting field validation errors or disabled submit state.
+  5. UI Bookings Management:
+     - View Bookings: Navigate to `/bookings`, verify existing customer booking cards/table rows are rendered.
+
 - NAMING CONVENTIONS: Follow strict Python PEP 8 naming: lower_snake_case for files (`test_<feature_slug>.py`), functions (`test_<scenario>`), and variables; PascalCase for test classes (`Test<Feature>`).
 - If any endpoint in the API context is marked auth_required: true, OR if you cannot confirm an endpoint is public, write the test so it first obtains a token (via POST /auth/register or /auth/login) and sends it as an Authorization: Bearer <token> header. Do not assume an endpoint is public just because the API context doesn't explicitly say it requires auth - when in doubt, send the token anyway, since sending an unneeded token is harmless but omitting a required one causes a 401 failure that looks like a bug in the app rather than in the test.
 - If the API context includes a "note" field on an endpoint describing a CONFIRMED response shape or behavior from a real test run, treat that as ground truth and write assertions that match it exactly - it is more reliable than the schema name alone.
@@ -21,3 +40,4 @@ Rules:
 - Respect every item under "constraints" in the spec exactly (e.g. no real payments, no destructive actions outside staging). If the UI context shows admin-only controls (e.g. Add New Event, Manage Events, Delete), do not write tests that use them unless the spec explicitly asks for admin flow coverage - assume they are out of scope by default.
 - Each test must have a clear docstring stating what it verifies and why.
 - Group related tests into classes named Test<Feature>.
+

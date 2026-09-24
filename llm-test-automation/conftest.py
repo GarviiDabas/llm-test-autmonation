@@ -126,6 +126,21 @@ def pytest_configure(config):
         config._metadata["Execution Mode"] = "Pytest + Playwright (Headless)"
 
 
+def pytest_unconfigure(config):
+    """Ensure generated HTML reports include lang='en' for WCAG accessibility and SonarQube compliance."""
+    htmlpath = getattr(config.option, "htmlpath", None)
+    if htmlpath:
+        from pathlib import Path
+        p = Path(htmlpath)
+        if p.exists():
+            try:
+                text = p.read_text(encoding="utf-8")
+                if "<html>" in text:
+                    p.write_text(text.replace("<html>", '<html lang="en">', 1), encoding="utf-8")
+            except Exception:
+                pass
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield

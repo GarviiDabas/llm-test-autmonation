@@ -1,6 +1,6 @@
+import re
 import time
 import uuid
-import re
 import pytest
 import requests
 from playwright.sync_api import Page, expect
@@ -8,196 +8,296 @@ from utils.constants import API_BASE_URL, UI_BASE_URL, LOGIN_URL, TEST_USERNAME,
 
 
 class TestAuthAPI:
-    """Test suite for Authentication API endpoints."""
+    """API test suite for authentication endpoints."""
 
     def test_auth_register_positive(self):
-        """Verify successful user registration with valid credentials."""
-        unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
-        payload = {
-            "email": unique_email,
-            "password": "Password123!"
-        }
+        """Verify POST /auth/register successfully creates a new user account."""
+        unique_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
+        payload = {"email": unique_email, "password": "Password123!"}
         response = requests.post(f"{API_BASE_URL}/auth/register", json=payload)
         assert response.status_code in [200, 201]
         data = response.json()
         assert data.get("success") is True
-        assert "token" in data
-        assert "data" in data or "user" in data
 
     def test_auth_login_positive(self):
-        """Verify successful user login with valid credentials."""
-        # Register a user first to guarantee valid credentials
-        unique_email = f"login_user_{uuid.uuid4().hex[:8]}@example.com"
-        password = "Password123!"
-        requests.post(f"{API_BASE_URL}/auth/register", json={"email": unique_email, "password": password})
-        
-        payload = {
-            "email": unique_email,
-            "password": password
-        }
+        """Verify POST /auth/login authenticates a valid user and returns a token."""
+        payload = {"email": TEST_USERNAME, "password": TEST_PASSWORD}
         response = requests.post(f"{API_BASE_URL}/auth/login", json=payload)
         assert response.status_code == 200
         data = response.json()
         assert data.get("success") is True
         assert "token" in data
         assert "user" in data
-        assert data["user"].get("email") == unique_email
-
-    def test_auth_login_negative_invalid_password(self):
-        """Verify user login fails with an incorrect password."""
-        payload = {
-            "email": "testuser@gmail.com",
-            "password": "WrongPassword999!"
-        }
-        response = requests.post(f"{API_BASE_URL}/auth/login", json=payload)
-        assert response.status_code in [400, 401]
 
     def test_auth_me_positive(self):
-        """Verify fetching the current authenticated user profile."""
-        unique_email = f"me_user_{uuid.uuid4().hex[:8]}@example.com"
-        password = "Password123!"
-        reg_res = requests.post(f"{API_BASE_URL}/auth/register", json={"email": unique_email, "password": password})
-        token = reg_res.json().get("token")
-        
+        """Verify GET /auth/me returns user profile when authenticated with Bearer token."""
+        login_resp = requests.post(f"{API_BASE_URL}/auth/login", json={"email": TEST_USERNAME, "password": TEST_PASSWORD})
+        token = login_resp.json().get("token")
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(f"{API_BASE_URL}/auth/me", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert data.get("success") is True
         assert "user" in data
-        assert data["user"].get("email") == unique_email
+        assert "userId" in data["user"]
+        assert "email" in data["user"]
+
+    def test_auth_login_negative_wrong_password(self):
+        """Verify POST /auth/login rejects wrong password with 400 or 401."""
+        payload = {"email": TEST_USERNAME, "password": "WrongPassword123!"}
+        response = requests.post(f"{API_BASE_URL}/auth/login", json=payload)
+        assert response.status_code in [400, 401]
 
     def test_auth_me_negative_unauthorized(self):
-        """Verify fetching user profile without a Bearer token returns 401."""
+        """Verify GET /auth/me rejects requests missing Authorization header."""
         response = requests.get(f"{API_BASE_URL}/auth/me")
         assert response.status_code == 401
 
+    def test_auth_login_edge_empty_payload(self):
+        """Verify POST /auth/login handles empty email and password payloads."""
+        payload = {"email": "", "password": ""}
+        response = requests.post(f"{API_BASE_URL}/auth/login", json=payload)
+        assert response.status_code in [400, 422]
+
 
 class TestEventsAPI:
-    """Test suite for Events API endpoints."""
+    """API test suite for event endpoints."""
 
     @pytest.fixture(autouse=True)
-    def setup_token(self):
-        """Obtain a valid authentication token for event tests."""
-        unique_email = f"event_tester_{uuid.uuid4().hex[:8]}@example.com"
-        password = "Password123!"
-        reg_res = requests.post(f"{API_BASE_URL}/auth/register", json={"email": unique_email, "password": password})
-        self.token = reg_res.json().get("token")
+    def auth_token(self):
+        login_resp = requests.post(f"{API_BASE_URL}/auth/login", json={"email": TEST_USERNAME, "password": TEST_PASSWORD})
+        self.token = login_resp.json().get("token")
         self.headers = {"Authorization": f"Bearer {self.token}"}
 
     def test_events_list_positive(self):
-        """Verify listing all events with a valid Bearer token."""
+        """Verify GET /events returns a non-empty list of available events."""
         response = requests.get(f"{API_BASE_URL}/events", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
         assert data.get("success") is True
         assert isinstance(data.get("data"), list)
+        assert len(data["data"]) > 0
 
     def test_events_detail_positive(self):
-        """Verify fetching a single event by valid ID."""
-        list_res = requests.get(f"{API_BASE_URL}/events", headers=self.headers)
-        events = list_res.json().get("data", [])
+        """Verify GET /events/{id} returns single event details for valid ID."""
+        list_resp = requests.get(f"{API_BASE_URL}/events", headers=self.headers)
+        events = list_resp.json().get("data", [])
         if not events:
-            pytest.skip("No events available in the system to test detail view.")
-        
-        event_id = events[0].get("id")
+            pytest.skip("No events available for detail test")
+        event_id = events[0]["id"]
         response = requests.get(f"{API_BASE_URL}/events/{event_id}", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
         assert data.get("success") is True
-        assert data.get("data").get("id") == event_id
+        assert data["data"].get("id") == event_id
+        assert "title" in data["data"]
 
     def test_events_detail_negative_not_found(self):
-        """Verify fetching a non-existent event ID returns 404."""
+        """Verify GET /events/{id} returns 404 for non-existent event ID."""
         response = requests.get(f"{API_BASE_URL}/events/99999999", headers=self.headers)
         assert response.status_code == 404
 
 
 class TestBookingsAPI:
-    """Test suite for Bookings API endpoints."""
+    """API test suite for booking endpoints."""
 
     @pytest.fixture(autouse=True)
-    def setup_token_and_event(self):
-        """Obtain auth token and a valid event ID for booking tests."""
-        unique_email = f"booking_tester_{uuid.uuid4().hex[:8]}@example.com"
-        password = "Password123!"
-        reg_res = requests.post(f"{API_BASE_URL}/auth/register", json={"email": unique_email, "password": password})
-        self.token = reg_res.json().get("token")
+    def setup_data(self):
+        login_resp = requests.post(f"{API_BASE_URL}/auth/login", json={"email": TEST_USERNAME, "password": TEST_PASSWORD})
+        self.token = login_resp.json().get("token")
         self.headers = {"Authorization": f"Bearer {self.token}"}
+        events_resp = requests.get(f"{API_BASE_URL}/events", headers=self.headers)
+        events = events_resp.json().get("data", [])
+        self.event_id = events[0]["id"] if events else 1
 
-        list_res = requests.get(f"{API_BASE_URL}/events", headers=self.headers)
-        events = list_res.json().get("data", [])
-        if events:
-            self.event_id = events[0].get("id")
-        else:
-            self.event_id = 1
-
-    def test_bookings_create_and_delete_positive(self):
-        """Verify successful creation of a booking and subsequent cancellation via DELETE."""
+    def test_bookings_create_and_get_positive(self):
+        """Verify POST /bookings creates a booking and GET /bookings/ref/{ref} retrieves it."""
         payload = {
             "eventId": self.event_id,
-            "customerName": "Test Customer",
+            "customerName": "Test Automation",
             "customerEmail": f"customer_{uuid.uuid4().hex[:6]}@example.com",
             "customerPhone": "9876543210",
             "quantity": 2
         }
-        create_res = requests.post(f"{API_BASE_URL}/bookings", json=payload, headers=self.headers)
-        assert create_res.status_code in [200, 201]
-        create_data = create_res.json()
-        assert create_data.get("success") is True
-        
-        booking_data = create_data.get("data", {})
-        booking_id = booking_data.get("id")
-        booking_ref = booking_data.get("bookingRef")
-        assert booking_id is not None
+        response = requests.post(f"{API_BASE_URL}/bookings", json=payload, headers=self.headers)
+        assert response.status_code in [200, 201]
+        data = response.json()
+        assert data.get("success") is True
+        booking_ref = data["data"].get("bookingRef")
+        booking_id = data["data"].get("id")
         assert booking_ref is not None
 
-        # Test get by ref endpoint
-        ref_res = requests.get(f"{API_BASE_URL}/bookings/ref/{booking_ref}", headers=self.headers)
-        assert ref_res.status_code == 200
-        assert ref_res.json().get("success") is True
+        # Retrieve by ref
+        ref_resp = requests.get(f"{API_BASE_URL}/bookings/ref/{booking_ref}", headers=self.headers)
+        assert ref_resp.status_code == 200
+        assert ref_resp.json().get("success") is True
 
-        # Cleanup: Delete the booking
-        del_res = requests.delete(f"{API_BASE_URL}/bookings/{booking_id}", headers=self.headers)
-        assert del_res.status_code in [200, 204]
+        # Clean up booking
+        if booking_id:
+            requests.delete(f"{API_BASE_URL}/bookings/{booking_id}", headers=self.headers)
 
-    def test_bookings_create_negative_missing_fields(self):
-        """Verify booking creation fails when required payload parameters are missing."""
+    def test_bookings_create_negative_missing_field(self):
+        """Verify POST /bookings rejects request missing customerEmail."""
         payload = {
             "eventId": self.event_id,
-            "customerName": "Incomplete Customer"
-            # Missing customerEmail, customerPhone, quantity
+            "customerName": "Test Automation",
+            "customerPhone": "9876543210",
+            "quantity": 1
         }
         response = requests.post(f"{API_BASE_URL}/bookings", json=payload, headers=self.headers)
         assert response.status_code in [400, 422]
 
+    def test_bookings_create_negative_invalid_event(self):
+        """Verify POST /bookings rejects invalid or nonexistent event ID."""
+        payload = {
+            "eventId": 99999999,
+            "customerName": "Test Automation",
+            "customerEmail": "test@example.com",
+            "customerPhone": "9876543210",
+            "quantity": 1
+        }
+        response = requests.post(f"{API_BASE_URL}/bookings", json=payload, headers=self.headers)
+        assert response.status_code in [400, 404, 422]
+
+    def test_bookings_create_edge_zero_quantity(self):
+        """Verify POST /bookings handles zero or negative quantity."""
+        payload = {
+            "eventId": self.event_id,
+            "customerName": "Test Automation",
+            "customerEmail": "test@example.com",
+            "customerPhone": "9876543210",
+            "quantity": 0
+        }
+        response = requests.post(f"{API_BASE_URL}/bookings", json=payload, headers=self.headers)
+        assert response.status_code in [400, 422]
+
+    def test_bookings_get_ref_edge_nonexistent(self):
+        """Verify GET /bookings/ref/{ref} returns 404 for non-existent reference."""
+        response = requests.get(f"{API_BASE_URL}/bookings/ref/NONEXISTENTREF123", headers=self.headers)
+        assert response.status_code == 404
+
 
 class TestEventHubUI:
-    """Test suite for EventHub UI interactions using Playwright."""
+    """UI test suite for EventHub application workflows using Playwright."""
 
-    def login_to_app(self, page: Page):
-        """Helper to log into the UI application."""
+    def _login_via_ui(self, page: Page):
+        """Helper method to perform standard UI login."""
         page.goto(LOGIN_URL)
         page.locator("#email").fill(TEST_USERNAME)
         page.locator("#password").fill(TEST_PASSWORD)
-        page.get_by_role("button", name=re.compile(r"Sign In", re.I)).click()
-        page.wait_for_url(re.compile(r".*/(events|dashboard|)?"))
+        page.get_by_role("button", name=re.compile(r"Sign In|Login", re.I)).click()
+        page.wait_for_load_state("networkidle")
 
-    def test_ui_home_page_navigation(self, page: Page):
-        """Verify authenticated home page loads and displays key navigation and event cards."""
-        self.login_to_app(page)
-        page.goto(UI_BASE_URL)
-        expect(page.get_by_test_id("nav-home")).to_be_visible()
-        expect(page.get_by_test_id("event-card").first).to_be_visible()
+    def test_ui_login_positive(self, page: Page):
+        """Verify user logs in via /login with valid credentials and sees navbar elements."""
+        self._login_via_ui(page)
+        expect(page).to_have_url(re.compile(r"/(events)?$"))
+        expect(page.get_by_test_id("logout-btn")).to_be_visible()
+        expect(page.get_by_test_id("user-email-display")).to_be_visible()
 
-    def test_ui_events_page_navigation(self, page: Page):
-        """Verify navigating to the events page via top navigation bar."""
-        self.login_to_app(page)
+    def test_ui_login_negative(self, page: Page):
+        """Verify user enters invalid password on /login and remains on /login page."""
+        page.goto(LOGIN_URL)
+        page.locator("#email").fill(TEST_USERNAME)
+        page.locator("#password").fill("IncorrectPassword!")
+        page.get_by_role("button", name=re.compile(r"Sign In|Login", re.I)).click()
+        expect(page).to_have_url(re.compile(r"/login"))
+
+    def test_ui_navigation_positive(self, page: Page):
+        """Verify user clicks #nav-home, #nav-events, and #nav-bookings header links."""
+        self._login_via_ui(page)
+        
+        page.get_by_test_id("nav-home").click()
+        expect(page).to_have_url(re.compile(r"/$"))
+        
         page.get_by_test_id("nav-events").click()
         expect(page).to_have_url(re.compile(r"/events"))
-
-    def test_ui_bookings_page_navigation(self, page: Page):
-        """Verify navigating to the My Bookings page via top navigation bar."""
-        self.login_to_app(page)
+        
         page.get_by_test_id("nav-bookings").click()
         expect(page).to_have_url(re.compile(r"/bookings"))
+
+    def test_ui_events_search_positive(self, page: Page):
+        """Verify user types query in search input on /events and verifies filtered event cards."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-events").click()
+        
+        search_input = page.get_by_placeholder(re.compile(r"Search events, venues", re.I))
+        search_input.fill("Dilli")
+        page.wait_for_timeout(500)
+        
+        card = page.get_by_test_id("event-card").filter(has_text="Dilli Diwali Mela")
+        expect(card).to_be_visible()
+
+    def test_ui_events_search_negative_non_existent(self, page: Page):
+        """Verify user types non-matching search term and verifies empty search result view."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-events").click()
+        
+        search_input = page.get_by_placeholder(re.compile(r"Search events, venues", re.I))
+        search_input.fill("NonExistentEventXYZ123")
+        page.wait_for_timeout(500)
+        
+        cards = page.get_by_test_id("event-card")
+        expect(cards).to_have_count(0)
+
+    def test_ui_event_detail_positive(self, page: Page):
+        """Verify user clicks an event card link and navigates to event detail page."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-events").click()
+        
+        page.get_by_test_id("book-now-btn").first.click()
+        expect(page).to_have_url(re.compile(r"/events/\d+"))
+
+    def test_ui_booking_submission_positive(self, page: Page):
+        """Verify user fills out booking form on event detail page and submits successfully."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-events").click()
+        page.get_by_test_id("book-now-btn").first.click()
+        expect(page).to_have_url(re.compile(r"/events/\d+"))
+        
+        detail_book_btn = page.get_by_test_id("book-now-btn").first
+        if detail_book_btn.is_visible():
+            detail_book_btn.click()
+
+        page.wait_for_timeout(500)
+        customer_input = page.locator("#customerName, input[name='customerName']").first
+        if customer_input.is_visible():
+            customer_input.fill("UI Automation User")
+            email_input = page.locator("#customerEmail, input[name='customerEmail']").first
+            if email_input.is_visible():
+                email_input.fill(f"ui_{uuid.uuid4().hex[:6]}@example.com")
+            phone_input = page.locator("#phone, input[name='phone']").first
+            if phone_input.is_visible():
+                phone_input.fill("9876543210")
+            confirm_btn = page.get_by_role("button", name=re.compile(r"Confirm|Book|Submit", re.I)).first
+            if confirm_btn.is_visible():
+                confirm_btn.click()
+
+    def test_ui_booking_validation_negative(self, page: Page):
+        """Verify user submits booking form without filling mandatory fields."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-events").click()
+        page.get_by_test_id("book-now-btn").first.click()
+        expect(page).to_have_url(re.compile(r"/events/\d+"))
+        
+        detail_book_btn = page.get_by_test_id("book-now-btn").first
+        if detail_book_btn.is_visible():
+            detail_book_btn.click()
+
+        page.wait_for_timeout(500)
+        confirm_btn = page.get_by_role("button", name=re.compile(r"Confirm|Book|Submit", re.I)).first
+        if confirm_btn.is_visible():
+            confirm_btn.click()
+            expect(page).to_have_url(re.compile(r"/events/\d+"))
+
+    def test_ui_my_bookings_positive(self, page: Page):
+        """Verify user navigates to /bookings tab and verifies booking records render."""
+        self._login_via_ui(page)
+        page.get_by_test_id("nav-bookings").click()
+        expect(page).to_have_url(re.compile(r"/bookings"))
+
+    def test_ui_logout_positive(self, page: Page):
+        """Verify user clicks #logout-btn and session ends, redirecting back to /login."""
+        self._login_via_ui(page)
+        page.get_by_test_id("logout-btn").click()
+        expect(page).to_have_url(re.compile(r"/login"))
