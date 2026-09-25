@@ -3,13 +3,12 @@ import asyncio
 import json
 import os
 import re
-import sys
+import time
 from pathlib import Path
 
-import requests
 import yaml
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Page
 from utils.constants import (
     API_BASE_URL,
     UI_BASE_URL,
@@ -17,11 +16,12 @@ from utils.constants import (
     DEFAULT_TEST_PASSWORD,
     SUBMIT_BUTTON_PATTERN,
     TEST_USERNAME,
-    TEST_PASSWORD
+    TEST_PASSWORD,
+    DEFAULT_EMAIL_SELECTOR,
+    DEFAULT_PASSWORD_SELECTOR
 )
 
 load_dotenv()
-
 
 COLLECT_JS = """
 () => {
@@ -60,20 +60,15 @@ COLLECT_JS = """
 }
 """
 
+class NetworkInterceptor:
+    def __init__(self):
+        self.api_calls = {}
 
-
-async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = None) -> tuple[dict, dict]:
-    """Connect to Playwright MCP server or execute Playwright async session to gather rich UI context and API endpoints via network interception."""
-    print("[Playwright MCP] Gathering UI and API context across login, events list, detail, and bookings pages...")
-
-    api_calls = {}
-
-    async def handle_response(response):
+    async def handle_response(self, response):
         req = response.request
         if "/api/" in req.url and req.resource_type in ["fetch", "xhr"]:
-            # Deduplicate by METHOD + URL
             key = f"{req.method} {req.url.split('?')[0]}"
-            if key not in api_calls:
+            if key not in self.api_calls:
                 call_info = {
                     "method": req.method,
                     "url": req.url,
@@ -89,84 +84,108 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
                         call_info["response_keys"] = list(data[0].keys())
                 except Exception:
                     pass
-                api_calls[key] = call_info
+                self.api_calls[key] = call_info
+
+
+async def perform_login(page: Page, login_config: dict | None) -> None:
+    """Navigates to login page, registers a dynamic user via Playwright request context, and logs in."""
+    await page.goto(LOGIN_URL, wait_until="networkidle")
+
+    # Fetch configuration
+    username_env = login_config.get("username_env", "TEST_USERNAME") if login_config else "TEST_USERNAME"
+    password_env = login_config.get("password_env", "TEST_PASSWORD") if login_config else "TEST_PASSWORD"
+    username = os.environ.get(username_env)
+    password = os.environ.get(password_env)
+
+    reg_email = f"ui_auto_{int(time.time())}@test.com"
+    reg_payload = {"email": reg_email, "password": DEFAULT_TEST_PASSWORD}
+
+    # Use async HTTP client provided by Playwright to register dynamic user
+    try:
+        await page.request.post(f"{API_BASE_URL}/auth/register", data=reg_payload)
+    except Exception:
+        pass
+
+    # Perform UI login
+    email_selector = login_config.get("email_selector", DEFAULT_EMAIL_SELECTOR) if login_config else DEFAULT_EMAIL_SELECTOR
+    password_selector = login_config.get("password_selector", DEFAULT_PASSWORD_SELECTOR) if login_config else DEFAULT_PASSWORD_SELECTOR
+    submit_pattern = login_config.get("submit_name", SUBMIT_BUTTON_PATTERN) if login_config else SUBMIT_BUTTON_PATTERN
+
+    await page.fill(email_selector, username if username else reg_email)
+    await page.fill(password_selector, password if password else DEFAULT_TEST_PASSWORD)
+
+    submit_btn = page.get_by_role("button", name=re.compile(submit_pattern, re.I))
+    if await submit_btn.count() > 0:
+        await submit_btn.first.click()
+        await page.wait_for_timeout(2000)
+
+
+async def scrape_app_pages(page: Page) -> list[dict]:
+    """Navigates through the application views to trigger DOM rendering and network calls."""
+    elements = await page.evaluate(COLLECT_JS)
+
+    try:
+        await page.goto(UI_BASE_URL, wait_until="networkidle")
+        events_els = await page.evaluate(COLLECT_JS)
+        elements.extend(events_els)
+
+        # Click an event to trigger detail views
+        event_cards = page.get_by_test_id("event-card")
+        if await event_cards.count() > 0:
+            await event_cards.first.click()
+            await page.wait_for_timeout(2000)
+            detail_els = await page.evaluate(COLLECT_JS)
+            elements.extend(detail_els)
+
+        # Navigate to bookings
+        await page.goto(f"{UI_BASE_URL}/bookings", wait_until="networkidle")
+        await page.wait_for_timeout(2000)
+        bookings_els = await page.evaluate(COLLECT_JS)
+        elements.extend(bookings_els)
+    except Exception:
+        pass
+
+    return elements
+
+
+def deduplicate_elements(elements: list[dict]) -> list[dict]:
+    """Removes duplicate DOM elements based on unique keys."""
+    seen = set()
+    unique_elements = []
+    for el in elements:
+        key = (
+            el.get("testid")
+            or el.get("id")
+            or (f"{el.get('role')}:{el.get('accessible_name')}" if el.get('role') and el.get('accessible_name') else None)
+        )
+        if key:
+            if key not in seen:
+                seen.add(key)
+                unique_elements.append(el)
+        else:
+            unique_elements.append(el)
+    return unique_elements
+
+
+async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = None) -> tuple[dict, dict]:
+    """Connect to Playwright MCP server or execute Playwright async session to gather rich UI context and API endpoints."""
+    print("[Playwright MCP] Gathering UI and API context across login, events list, detail, and bookings pages...")
+
+    interceptor = NetworkInterceptor()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
 
         # Intercept network responses to build API context dynamically
-        page.on("response", handle_response)
+        page.on("response", interceptor.handle_response)
 
-        # 1. Login Page
-        await page.goto(LOGIN_URL, wait_until="networkidle")
+        # Execute workflows
+        await perform_login(page, login_config)
         title = await page.title()
+        raw_elements = await scrape_app_pages(page)
 
-        username_env = login_config.get("username_env", "TEST_USERNAME") if login_config else "TEST_USERNAME"
-        password_env = login_config.get("password_env", "TEST_PASSWORD") if login_config else "TEST_PASSWORD"
-        username = os.environ.get(username_env)
-        password = os.environ.get(password_env)
-
-        import time
-        reg_email = f"ui_auto_{int(time.time())}@test.com"
-        reg_payload = {"email": reg_email, "password": DEFAULT_TEST_PASSWORD}
-        try:
-            requests.post(f"{API_BASE_URL}/auth/register", json=reg_payload, timeout=5)
-        except Exception:
-            pass
-
-        # Perform UI login
-        email_selector = login_config.get("email_selector", "#email") if login_config else "#email"
-        password_selector = login_config.get("password_selector", "#password") if login_config else "#password"
-        submit_pattern = login_config.get("submit_name", SUBMIT_BUTTON_PATTERN) if login_config else SUBMIT_BUTTON_PATTERN
-
-        await page.fill(email_selector, username if username else reg_email)
-        await page.fill(password_selector, password if password else DEFAULT_TEST_PASSWORD)
-        submit_btn = page.get_by_role("button", name=re.compile(submit_pattern, re.I))
-        if await submit_btn.count() > 0:
-            await submit_btn.first.click()
-            await page.wait_for_timeout(2000)
-
-        # Collect elements across current page
-        elements = await page.evaluate(COLLECT_JS)
-
-        # Navigate to /events and collect
-        try:
-            await page.goto(UI_BASE_URL, wait_until="networkidle")
-            events_els = await page.evaluate(COLLECT_JS)
-            elements.extend(events_els)
-
-            # Click an event to trigger more API calls (events detail)
-            event_cards = page.get_by_test_id("event-card")
-            if await event_cards.count() > 0:
-                await event_cards.first.click()
-                await page.wait_for_timeout(2000)
-                detail_els = await page.evaluate(COLLECT_JS)
-                elements.extend(detail_els)
-
-            # Navigate to bookings to trigger bookings API calls
-            await page.goto(f"{UI_BASE_URL}/bookings", wait_until="networkidle")
-            await page.wait_for_timeout(2000)
-            bookings_els = await page.evaluate(COLLECT_JS)
-            elements.extend(bookings_els)
-        except Exception:
-            pass
-
-        # Deduplicate elements by identity
-        seen = set()
-        unique_elements = []
-        for el in elements:
-            key = (
-                el.get("testid")
-                or el.get("id")
-                or (f"{el.get('role')}:{el.get('accessible_name')}" if el.get('role') and el.get('accessible_name') else None)
-            )
-            if key:
-                if key not in seen:
-                    seen.add(key)
-                    unique_elements.append(el)
-            else:
-                unique_elements.append(el)
+        unique_elements = deduplicate_elements(raw_elements)
 
         try:
             ax_tree = await page.accessibility.snapshot()
@@ -186,8 +205,8 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
 
     api_context = {
         "source": "Dynamic Network Interception",
-        "endpoint_count": len(api_calls),
-        "endpoints": list(api_calls.values())
+        "endpoint_count": len(interceptor.api_calls),
+        "endpoints": list(interceptor.api_calls.values())
     }
 
     (out_dir / "ui_context.json").write_text(json.dumps(ui_context, indent=2))
@@ -196,19 +215,18 @@ async def run_mcp_session(url: str, out_dir: Path, login_config: dict | None = N
     return ui_context, api_context
 
 
-
 def main():
     parser = argparse.ArgumentParser(description="Playwright MCP Context Gatherer")
     parser.add_argument("--url", required=True, help="Target URL to inspect")
-    parser.add_argument("--out", default="context", help="Output directory")
+    parser.add_argument("--out", default="generated/context", help="Output directory")
 
     login_group = parser.add_argument_group("login")
     login_group.add_argument("--login-url", default=None)
     login_group.add_argument("--username-env", default="TEST_USERNAME")
     login_group.add_argument("--password-env", default="TEST_PASSWORD")
-    login_group.add_argument("--email-selector", default="#email")
-    login_group.add_argument("--password-selector", default="#password")
-    login_group.add_argument("--submit-name", default="sign in|log in|login|submit")
+    login_group.add_argument("--email-selector", default=DEFAULT_EMAIL_SELECTOR)
+    login_group.add_argument("--password-selector", default=DEFAULT_PASSWORD_SELECTOR)
+    login_group.add_argument("--submit-name", default=SUBMIT_BUTTON_PATTERN)
 
     args = parser.parse_args()
     out_dir = Path(args.out)

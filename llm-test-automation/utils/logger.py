@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-LOG_DIR = Path("logs")
+LOG_DIR = Path("generated/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 AUTOMATION_LOG_FILE = LOG_DIR / "automation.log"
 

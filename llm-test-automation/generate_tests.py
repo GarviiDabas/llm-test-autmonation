@@ -100,9 +100,9 @@ def call_gemini(prompt: str, model_name: str, sys_inst: str, log_file_name: str)
     except Exception as e:
         raise RuntimeError(f"Gemini API call failed ({type(e).__name__}): {e}") from e
 
-    Path("logs").mkdir(exist_ok=True)
+    Path("generated/logs").mkdir(parents=True, exist_ok=True)
     raw_text = response.text or ""
-    Path(f"logs/{log_file_name}").write_text(raw_text, encoding="utf-8")
+    Path(f"generated/logs/{log_file_name}").write_text(raw_text, encoding="utf-8")
 
     if not raw_text.strip():
         raise ValueError(f"Gemini returned an empty response.")
@@ -139,8 +139,8 @@ def parse_response(text: str) -> tuple[list, str]:
 def main():
     parser = argparse.ArgumentParser(description="Generate a pytest suite from spec + context using Planner Strategy")
     parser.add_argument("--spec", required=True, help="Path to the YAML test spec")
-    parser.add_argument("--context", default="context", help="Directory with gathered context")
-    parser.add_argument("--out", default="tests", help="Directory to write generated tests")
+    parser.add_argument("--context", default="generated/context", help="Directory with gathered context")
+    parser.add_argument("--out", default="generated/tests", help="Directory to write generated tests")
     parser.add_argument("--model", default=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     args = parser.parse_args()
 
@@ -163,7 +163,7 @@ def main():
     logger.info(f"PHASE 1: Generating massive Test Plan using {args.model}")
     plan_prompt = f"Here is the application context:\n\n{context_str}\n\nGenerate the comprehensive Test Plan now."
     test_plan = call_gemini(plan_prompt, args.model, PLANNER_INSTRUCTION, "test_plan.md")
-    logger.info("Test plan generated and saved to logs/test_plan.md")
+    logger.info("Test plan generated and saved to generated/logs/test_plan.md")
 
     # --- PHASE 2: CODING ---
     logger.info(f"PHASE 2: Generating Pytest Code from Plan using {args.model}")

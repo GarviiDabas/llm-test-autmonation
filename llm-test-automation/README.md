@@ -33,9 +33,9 @@ python pipeline.py
 
 ### 3. Review the Output
 The pipeline generates three critical artifacts:
-* `logs/test_plan.md` - The comprehensive list of testing scenarios the LLM planned out.
-* `tests/test_<project>.py` - The executable Pytest suite.
-* `tests/<project>_manifest.json` - A machine-readable JSON summary of the generated tests (useful for CI/CD dashboards).
+* `generated/logs/test_plan.md` - The comprehensive list of testing scenarios the LLM planned out.
+* `generated/tests/test_<project>.py` - The executable Pytest suite.
+* `generated/tests/<project>_manifest.json` - A machine-readable JSON summary of the generated tests (useful for CI/CD dashboards).
 
 **Always review the generated Pytest file before running it.** Treat the output like a pull request from a junior engineer to ensure no destructive test actions leaked through.
 
@@ -43,12 +43,12 @@ The pipeline generates three critical artifacts:
 Run the generated test suite using standard Pytest commands:
 ```bash
 # Run tests headlessly in the background
-python -m pytest tests/
+python -m pytest generated/tests/
 
 # Run tests with the browser UI visible
-python -m pytest tests/ --headed
+python -m pytest generated/tests/ --headed
 ```
-HTML reports and test artifacts will automatically be saved to the `reports/` directory.
+HTML reports and test artifacts will automatically be saved to the `generated/reports/` directory.
 
 ## CI/CD Integration
-Test *generation* is best kept as a manual, reviewed step to ensure safe code. Once generated, executing the tests in CI (GitHub Actions, GitLab CI) is straightforward: simply install dependencies and run `python -m pytest tests/`.
+Test *generation* is best kept as a manual, reviewed step to ensure safe code. Once generated, executing the tests in CI (GitHub Actions, GitLab CI) is straightforward: simply install dependencies and run `python -m pytest generated/tests/`.

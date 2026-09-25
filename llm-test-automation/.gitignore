@@ -12,16 +12,8 @@ venv/
 # --- Pytest & Test Execution Artifacts ---
 .pytest_cache/
 .pytest-report.json
-reports/
-test-results/
-playwright-report/
-playwright/.cache/
-
-# --- Context, Logs & Manifests ---
-context/*.json
-context/*.png
-logs/
-tests/*_manifest.json
+# --- Context, Logs & Manifests & Generated ---
+generated/
 
 # --- OS & Editor Noise ---
 .DS_Store

@@ -2,7 +2,7 @@
 pipeline.py — Runs the full LLM test generation and execution pipeline.
 
 Steps:
-  1. mcp_context_gatherer.py  — scrapes UI and fetches API context
+  1. context_gatherer.py  — scrapes UI and fetches API context
   2. generate_tests.py        — calls Gemini to generate the test suite
   3. pytest                   — executes the generated tests
 
@@ -49,7 +49,7 @@ def main():
     ui_url = target.get("ui_url", "")
 
     if not args.skip_gather:
-        gather_cmd = [sys.executable, "mcp_context_gatherer.py", "--url", ui_url]
+        gather_cmd = [sys.executable, "context_gatherer.py", "--url", ui_url]
         run_step(gather_cmd, "Context Gathering (UI scrape + API context via Network)")
 
     if not args.skip_generate:
