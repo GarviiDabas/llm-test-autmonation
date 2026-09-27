@@ -27,6 +27,10 @@ logger = get_logger("conftest")
 
 load_dotenv()
 
+# Suppress verbose INFO logs from the google_genai SDK (e.g. AFC enabled messages)
+import logging
+logging.getLogger("google_genai").setLevel(logging.WARNING)
+
 # ============================================================================
 # Environment & Client Fixtures
 # ============================================================================
@@ -195,6 +199,35 @@ def pytest_runtest_makereport(item, call):
                     )
             except Exception:
                 pass
+
+        # AI Failure Analysis
+        if hasattr(report, "longreprtext") and report.longreprtext:
+            try:
+                from google import genai
+                from google.genai import types
+
+                api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if api_key:
+                    client = genai.Client()
+                    explanation_prompt = f"Analyze this pytest failure trace and explain what went wrong in simple, human-readable English (2-3 sentences max). Focus on the core reason it failed. Trace:\n\n{report.longreprtext}"
+                    response = client.models.generate_content(
+                        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                        contents=[explanation_prompt],
+                        config=types.GenerateContentConfig(temperature=0.2)
+                    )
+                    if response.text:
+                        pytest_html = item.config.pluginmanager.getplugin("html")
+                        if pytest_html:
+                            extras.append(
+                                pytest_html.extras.html(
+                                    f'<div style="margin-top:12px; padding: 12px; background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; font-family: sans-serif;">'
+                                    f'<strong style="color:#b91c1c; font-size: 14px;">Failure Analysis:</strong><br/>'
+                                    f'<span style="color:#7f1d1d; font-size: 13px; line-height: 1.5;">{response.text}</span>'
+                                    f'</div>'
+                                )
+                            )
+            except Exception as e:
+                logger.error(f"Failed to generate AI explanation: {e}")
 
     report.extras = extras
 

@@ -92,15 +92,7 @@ p {
 
 /* Log output / Traceback containers */
 .log {
-  background: #090d16 !important;
-  color: #e2e8f0 !important;
-  border: 1px solid #334155 !important;
-  border-radius: 8px !important;
-  padding: 16px !important;
-  font-family: 'ui-monospace', 'Cascadia Code', 'Fira Code', monospace !important;
-  font-size: 0.85rem !important;
-  white-space: pre-wrap !important;
-  line-height: 1.6 !important;
+  display: none !important;
 }
 
 /* Links & Controls */

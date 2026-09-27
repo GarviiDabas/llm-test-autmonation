@@ -56,9 +56,12 @@ Output MUST follow this exact structure and nothing else:
 {MANIFEST_START}
 <a single JSON array - each item: {{"id": "...", "description": "...", "type": "ui"|"api", "expected_result": "..."}}>
 {MANIFEST_END}
-{CODE_START}
-<complete, runnable Python test file content - imports included>
-{CODE_END}
+### UI_TEST_CODE_START
+<complete, runnable Python test file content for UI tests - imports included>
+### UI_TEST_CODE_END
+### API_TEST_CODE_START
+<complete, runnable Python test file content for API tests - imports included>
+### API_TEST_CODE_END
 
 Do not include any prose, explanation, or markdown fences outside those markers."""
 
@@ -122,18 +125,20 @@ def sanitize_generated_code(code: str) -> str:
     return re.sub(r"from playwright\.sync_api import ([^\n]+)", fix_import, code)
 
 
-def parse_response(text: str) -> tuple[list, str]:
+def parse_response(text: str) -> tuple[list, str, str]:
     manifest_match = re.search(rf"{MANIFEST_START}(.*?){MANIFEST_END}", text, re.DOTALL)
-    code_match = re.search(rf"{CODE_START}(.*?){CODE_END}", text, re.DOTALL)
+    ui_code_match = re.search(r"### UI_TEST_CODE_START(.*?)### UI_TEST_CODE_END", text, re.DOTALL)
+    api_code_match = re.search(r"### API_TEST_CODE_START(.*?)### API_TEST_CODE_END", text, re.DOTALL)
 
-    if not manifest_match or not code_match:
+    if not manifest_match or not ui_code_match or not api_code_match:
         raise ValueError(
-            "Model output did not follow the expected format. Raw output saved to logs for debugging."
+            "Model output did not follow the expected format (missing manifest, UI code, or API code). Raw output saved to logs for debugging."
         )
 
     manifest = json.loads(manifest_match.group(1).strip())
-    code = code_match.group(1).strip()
-    return manifest, code
+    ui_code = ui_code_match.group(1).strip()
+    api_code = api_code_match.group(1).strip()
+    return manifest, ui_code, api_code
 
 
 def main():
@@ -170,22 +175,49 @@ def main():
     code_prompt = f"Here is the application context:\n\n{context_str}\n\nHere is the APPROVED TEST PLAN:\n\n{test_plan}\n\nYour task is to write the complete, executable pytest file that implements EVERY single scenario in the test plan exactly as described."
     raw_output = call_gemini(code_prompt, args.model, SYSTEM_INSTRUCTION, "raw_model_output.txt")
 
-    manifest, code = parse_response(raw_output)
-    code = sanitize_generated_code(code)
+    manifest, ui_code, api_code = parse_response(raw_output)
+    ui_code = sanitize_generated_code(ui_code)
+    api_code = sanitize_generated_code(api_code)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     project_meta = spec.get("project_metadata", {})
     project_name = project_meta.get("project_name") or spec.get("project_name", DEFAULT_PROJECT_SLUG)
     feature_slug = project_name.replace(" ", "_")
-    test_file = out_dir / f"test_{feature_slug}.py"
-    test_file.write_text(code, encoding="utf-8")
+
+    ui_test_file = out_dir / f"test_ui_{feature_slug}.py"
+    ui_test_file.write_text(ui_code, encoding="utf-8")
+
+    api_test_file = out_dir / f"test_api_{feature_slug}.py"
+    api_test_file.write_text(api_code, encoding="utf-8")
+
     manifest_file = out_dir / f"{feature_slug}_manifest.json"
     manifest_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    logger.info(f"Wrote generated test suite to: {test_file}")
+    logger.info(f"Wrote generated UI test suite to: {ui_test_file}")
+    logger.info(f"Wrote generated API test suite to: {api_test_file}")
     logger.info(f"Wrote manifest file to: {manifest_file} ({len(manifest)} tests described)")
-    logger.info("Review the generated file before running it!")
+
+    # --- PHASE 3: VALIDATION ---
+    import subprocess
+    for t_file in [ui_test_file, api_test_file]:
+        logger.info(f"Validating {t_file.name} syntax and fixtures...")
+        res = subprocess.run(["pytest", "--collect-only", str(t_file)], capture_output=True, text=True)
+        if res.returncode != 0:
+            logger.warning(f"Validation failed for {t_file.name}! Attempting auto-fix...")
+            error_log = res.stdout + "\n" + res.stderr
+            fix_prompt = f"The following test file failed collection/compilation:\n\n```python\n{t_file.read_text(encoding='utf-8')}\n```\n\nError output:\n```\n{error_log}\n```\n\nFix the code. Return ONLY the complete fixed Python code in a ```python block."
+            fixed_raw = call_gemini(fix_prompt, args.model, "You are a Python QA expert fixing broken pytest code. Output ONLY python code.", f"fix_{t_file.name}.log")
+            match = re.search(r"```python\n(.*?)```", fixed_raw, re.DOTALL)
+            if match:
+                t_file.write_text(sanitize_generated_code(match.group(1).strip()), encoding="utf-8")
+                logger.info(f"Applied auto-fix to {t_file.name}.")
+            else:
+                logger.error(f"Failed to extract fixed code for {t_file.name}.")
+        else:
+            logger.info(f"{t_file.name} is structurally valid.")
+
+    logger.info("Review the generated files before running them!")
 
 if __name__ == "__main__":
     main()
