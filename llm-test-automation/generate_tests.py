@@ -1,164 +1,119 @@
-"""
-generate_tests.py
-
-Sends the structured spec file + gathered UI/API context to Gemini and asks
-for a ready-to-run pytest test suite, plus a manifest describing each test.
-The output is written to disk for human review - nothing here runs tests.
-
-Model note: Google's model lineup moves fast and names change (see
-https://ai.google.dev/gemini-api/docs/models for the current list). This
-defaults to GEMINI_MODEL from the environment so you can update it in one
-place without touching code. gemini-2.5-flash is used as a safe fallback,
-but Google has scheduled it for shutdown on 16 Oct 2026 - check the docs
-link above before relying on it.
-
-Usage:
-    python generate_tests.py --spec config/test_spec.yaml --context context/
-"""
-
 import argparse
 import json
 import os
 import re
-import time
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai import errors as genai_errors
 from utils.logger import get_logger
+from utils.constants import (
+    API_BASE_URL,
+    UI_BASE_URL,
+    LOGIN_URL,
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_PROJECT_SLUG
+)
 
 logger = get_logger("generate_tests")
 
 load_dotenv()
 
 
-MAX_RETRIES = 3
-RETRY_BACKOFF_SECONDS = 15  # doubles each retry: 15s, 30s, 60s
-
 MANIFEST_START, MANIFEST_END = "### MANIFEST_JSON_START", "### MANIFEST_JSON_END"
 CODE_START, CODE_END = "### TEST_CODE_START", "### TEST_CODE_END"
 
-SYSTEM_INSTRUCTION = f"""You are a senior QA automation engineer. You write
-Python test suites using pytest, and Playwright for UI tests or requests for
-API tests, based on a structured spec and real page/API context provided by
-the user - never invent locators, endpoints, or fields that aren't in the
-supplied context.
 
-Rules:
-- This is PYTHON Playwright, not JavaScript/TypeScript Playwright. Assertion
-  methods use snake_case: to_be_visible(), to_have_url(), to_have_value(),
-  to_be_enabled(), etc. NEVER use camelCase JS-style names like
-  toBeVisible(), toHaveURL(), toHaveValue() - these do not exist in the
-  Python API and will crash with AttributeError.
-- `page` is a FIXTURE, not an importable name. NEVER write
-  `from playwright.sync_api import page` - this does not exist and will
-  crash. The only real imports from playwright.sync_api are `Page` (the
-  type, capital P, used only for type hints) and `expect`. A test receives
-  the page fixture as a parameter: `def test_x(self, page: Page):`.
-- expect(page).to_have_url() accepts a string or a compiled regex
-  (re.compile(...)) - NEVER a lambda or predicate function. Import re if
-  you use this.
-- When you need a unique value (e.g. a unique test email), use the
-  simplest possible expression: `int(time.time())` or
-  `uuid.uuid4().hex[:8]`. Do not write nested or chained expressions you
-  have not double-checked are syntactically valid Python - a malformed
-  expression breaks the entire file, not just one test.
-- If any endpoint in the API context is marked auth_required: true, OR if
-  you cannot confirm an endpoint is public, write the test so it first
-  obtains a token (via POST /auth/register or /auth/login) and sends it
-  as an Authorization: Bearer <token> header. Do not assume an endpoint is
-  public just because the API context doesn't explicitly say it requires
-  auth - when in doubt, send the token anyway, since sending an unneeded
-  token is harmless but omitting a required one causes a 401 failure that
-  looks like a bug in the app rather than in the test.
-- If the API context includes a "note" field on an endpoint describing a
-  CONFIRMED response shape or behavior from a real test run, treat that
-  as ground truth and write assertions that match it exactly - it is more
-  reliable than the schema name alone.
-- Some data-testid values appear MORE THAN ONCE in the context (e.g. a
-  repeated card or button in a list). If you use a get_by_test_id() or
-  similar locator whose testid appears more than once in the supplied
-  element list, you MUST disambiguate it with .filter(has_text="...")
-  using a specific piece of text from that one element, or .nth(index).
-  Never use a plain get_by_test_id() call that would match multiple
-  elements without doing this.
-- Use ONLY the locators suggested in the context, or ones directly
-  derivable from the accessibility tree / element list. Never guess a
-  CSS selector that wasn't given to you.
-- Use ONLY the endpoints, methods, and parameters present in the API
-  context. Never invent an endpoint.
-- Respect every item under "constraints" in the spec exactly (e.g. no real
-  payments, no destructive actions outside staging). If the UI context
-  shows admin-only controls (e.g. Add New Event, Manage Events, Delete),
-  do not write tests that use them unless the spec explicitly asks for
-  admin flow coverage - assume they are out of scope by default.
-- Each test must have a clear docstring stating what it verifies and why.
-- Group related tests into classes named Test<Feature>.
-- Output MUST follow this exact structure and nothing else:
+PLANNER_INSTRUCTION = """You are a senior QA Architect.
+Analyze the provided application context (UI elements, API endpoints, and constraints) and generate a MASSIVE, exhaustive test plan.
+DO NOT WRITE CODE. Output only a structured markdown list of test scenarios.
+
+Categories to include:
+1. API - Positive (Happy path)
+2. API - Negative (Missing auth, bad payloads, 404s, 400s)
+3. API - Edge Cases (Empty strings, zeroes, nulls)
+4. UI - Authentication & Navigation
+5. UI - Form Validation & Error States
+6. UI - End-to-End Workflows
+
+For each scenario, write a 1-sentence description (e.g., "- POST /bookings with quantity 0 should return 400").
+Push for extremely high coverage. Generate at least 30-40 distinct test scenarios covering everything in the context.
+"""
+
+
+def load_system_instruction() -> str:
+    prompt_file = Path("config/system_prompt.txt")
+    if prompt_file.exists():
+        base_instruction = prompt_file.read_text(encoding="utf-8").strip()
+    else:
+        base_instruction = "You are a senior QA automation engineer writing pytest suites."
+
+    output_format = f"""
+Output MUST follow this exact structure and nothing else:
 
 {MANIFEST_START}
-<a single JSON array - each item: {{"id": "...", "description": "...",
-  "type": "ui"|"api", "expected_result": "..."}}>
+<a single JSON array - each item: {{"id": "...", "description": "...", "type": "ui"|"api", "expected_result": "..."}}>
 {MANIFEST_END}
-{CODE_START}
-<complete, runnable Python test file content - imports included>
-{CODE_END}
+### UI_TEST_CODE_START
+<complete, runnable Python test file content for UI tests - imports included>
+### UI_TEST_CODE_END
+### API_TEST_CODE_START
+<complete, runnable Python test file content for API tests - imports included>
+### API_TEST_CODE_END
 
-Do not include any prose, explanation, or markdown fences outside those
-markers."""
+Do not include any prose, explanation, or markdown fences outside those markers."""
+
+    return f"{base_instruction}\n\n{output_format}"
+
+
+SYSTEM_INSTRUCTION = load_system_instruction()
 
 
 def build_prompt(spec: dict, ui_context: dict | None, api_context: dict | None) -> str:
     parts = ["## TEST SPEC\n", yaml.dump(spec, sort_keys=False)]
     if ui_context:
         trimmed = {**ui_context}
-        trimmed.pop("accessibility_tree", None)  # keep prompt lean; element list is usually enough
-        parts.append("\n## UI CONTEXT (interactive elements with suggested locators)\n")
+        trimmed.pop("accessibility_tree", None)
+        parts.append("\n## UI CONTEXT (interactive elements)\n")
         parts.append(json.dumps(trimmed, indent=2))
     if api_context:
-        parts.append("\n## API CONTEXT (endpoints from OpenAPI spec)\n")
+        parts.append("\n## API CONTEXT (intercepted endpoints)\n")
         parts.append(json.dumps(api_context, indent=2))
     return "".join(parts)
 
 
-def call_gemini(prompt: str, model_name: str) -> str:
-    client = genai.Client()  # reads GEMINI_API_KEY from the environment
+def call_gemini(prompt: str, model_name: str, sys_inst: str, log_file_name: str) -> str:
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise EnvironmentError("No Gemini API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
 
+    client = genai.Client()
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION,
-        temperature=0.2,  # low temperature - we want consistent, boring test code
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-            disable=True
-        ),
+        system_instruction=sys_inst,
+        temperature=0.2,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
-    backoff = RETRY_BACKOFF_SECONDS
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = client.models.generate_content(
-                model=model_name, contents=[prompt], config=config,
-            )
-            return response.text
-        except genai_errors.ServerError as e:
-            # 503/overload and similar are transient - worth retrying.
-            # 4xx-style client errors (bad key, bad request) are not - fail fast.
-            if attempt == MAX_RETRIES:
-                raise
-            print(f"  Gemini server error ({e}). Retrying in {backoff}s "
-                  f"(attempt {attempt}/{MAX_RETRIES})...")
-            time.sleep(backoff)
-            backoff *= 2
+    try:
+        response = client.models.generate_content(
+            model=model_name, contents=[prompt], config=config,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Gemini API call failed ({type(e).__name__}): {e}") from e
+
+    Path("generated/logs").mkdir(parents=True, exist_ok=True)
+    raw_text = response.text or ""
+    Path(f"generated/logs/{log_file_name}").write_text(raw_text, encoding="utf-8")
+
+    if not raw_text.strip():
+        raise ValueError(f"Gemini returned an empty response.")
+
+    return raw_text
 
 
 def sanitize_generated_code(code: str) -> str:
-    """Belt-and-suspenders fixes for mistakes the model has made repeatedly
-    despite prompt instructions saying not to. `page` is a pytest-playwright
-    FIXTURE, not an importable name from playwright.sync_api - strip it from
-    any import line here rather than relying solely on the prompt, since
-    that hasn't been 100% reliable in practice."""
     def fix_import(match):
         names = [n.strip() for n in match.group(1).split(",")]
         had_page = "page" in names
@@ -170,68 +125,99 @@ def sanitize_generated_code(code: str) -> str:
     return re.sub(r"from playwright\.sync_api import ([^\n]+)", fix_import, code)
 
 
-def parse_response(text: str) -> tuple[list, str]:
+def parse_response(text: str) -> tuple[list, str, str]:
     manifest_match = re.search(rf"{MANIFEST_START}(.*?){MANIFEST_END}", text, re.DOTALL)
-    code_match = re.search(rf"{CODE_START}(.*?){CODE_END}", text, re.DOTALL)
+    ui_code_match = re.search(r"### UI_TEST_CODE_START(.*?)### UI_TEST_CODE_END", text, re.DOTALL)
+    api_code_match = re.search(r"### API_TEST_CODE_START(.*?)### API_TEST_CODE_END", text, re.DOTALL)
 
-    if not manifest_match or not code_match:
+    if not manifest_match or not ui_code_match or not api_code_match:
         raise ValueError(
-            "Model output did not follow the expected format. Raw output saved "
-            "to logs/raw_model_output.txt for debugging."
+            "Model output did not follow the expected format (missing manifest, UI code, or API code). Raw output saved to logs for debugging."
         )
 
     manifest = json.loads(manifest_match.group(1).strip())
-    code = code_match.group(1).strip()
-    return manifest, code
+    ui_code = ui_code_match.group(1).strip()
+    api_code = api_code_match.group(1).strip()
+    return manifest, ui_code, api_code
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a pytest suite from spec + context")
+    parser = argparse.ArgumentParser(description="Generate a pytest suite from spec + context using Planner Strategy")
     parser.add_argument("--spec", required=True, help="Path to the YAML test spec")
-    parser.add_argument("--context", default="context", help="Directory with gathered context")
-    parser.add_argument("--out", default="tests", help="Directory to write generated tests")
-    parser.add_argument("--model", default=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    parser.add_argument("--context", default="generated/context", help="Directory with gathered context")
+    parser.add_argument("--out", default="generated/tests", help="Directory to write generated tests")
+    parser.add_argument("--model", default=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     args = parser.parse_args()
 
-    spec = yaml.safe_load(Path(args.spec).read_text())
+    spec = yaml.safe_load(Path(args.spec).read_text(encoding="utf-8"))
     context_dir = Path(args.context)
 
     ui_context = None
     ui_path = context_dir / "ui_context.json"
     if ui_path.exists():
-        ui_context = json.loads(ui_path.read_text())
+        ui_context = json.loads(ui_path.read_text(encoding="utf-8"))
 
     api_context = None
     api_path = context_dir / "api_context.json"
     if api_path.exists():
-        api_context = json.loads(api_path.read_text())
+        api_context = json.loads(api_path.read_text(encoding="utf-8"))
 
-    prompt = build_prompt(spec, ui_context, api_context)
+    context_str = build_prompt(spec, ui_context, api_context)
 
-    logger.info(f"Calling Gemini model: {args.model}")
-    raw_output = call_gemini(prompt, args.model)
+    # --- PHASE 1: PLANNING ---
+    logger.info(f"PHASE 1: Generating massive Test Plan using {args.model}")
+    plan_prompt = f"Here is the application context:\n\n{context_str}\n\nGenerate the comprehensive Test Plan now."
+    test_plan = call_gemini(plan_prompt, args.model, PLANNER_INSTRUCTION, "test_plan.md")
+    logger.info("Test plan generated and saved to generated/logs/test_plan.md")
 
-    Path("logs").mkdir(exist_ok=True)
-    Path("logs/raw_model_output.txt").write_text(raw_output)
+    # --- PHASE 2: CODING ---
+    logger.info(f"PHASE 2: Generating Pytest Code from Plan using {args.model}")
+    code_prompt = f"Here is the application context:\n\n{context_str}\n\nHere is the APPROVED TEST PLAN:\n\n{test_plan}\n\nYour task is to write the complete, executable pytest file that implements EVERY single scenario in the test plan exactly as described."
+    raw_output = call_gemini(code_prompt, args.model, SYSTEM_INSTRUCTION, "raw_model_output.txt")
 
-    manifest, code = parse_response(raw_output)
-    code = sanitize_generated_code(code)
+    manifest, ui_code, api_code = parse_response(raw_output)
+    ui_code = sanitize_generated_code(ui_code)
+    api_code = sanitize_generated_code(api_code)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     project_meta = spec.get("project_metadata", {})
-    project_name = project_meta.get("project_name") or spec.get("project_name", "eventhub")
+    project_name = project_meta.get("project_name") or spec.get("project_name", DEFAULT_PROJECT_SLUG)
     feature_slug = project_name.replace(" ", "_")
-    test_file = out_dir / f"test_{feature_slug}.py"
-    test_file.write_text(code)
+
+    ui_test_file = out_dir / f"test_ui_{feature_slug}.py"
+    ui_test_file.write_text(ui_code, encoding="utf-8")
+
+    api_test_file = out_dir / f"test_api_{feature_slug}.py"
+    api_test_file.write_text(api_code, encoding="utf-8")
+
     manifest_file = out_dir / f"{feature_slug}_manifest.json"
-    manifest_file.write_text(json.dumps(manifest, indent=2))
+    manifest_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    logger.info(f"Wrote generated test suite to: {test_file}")
+    logger.info(f"Wrote generated UI test suite to: {ui_test_file}")
+    logger.info(f"Wrote generated API test suite to: {api_test_file}")
     logger.info(f"Wrote manifest file to: {manifest_file} ({len(manifest)} tests described)")
-    logger.info("Review the generated file before running it - see README for the review checklist.")
 
+    # --- PHASE 3: VALIDATION ---
+    import subprocess
+    for t_file in [ui_test_file, api_test_file]:
+        logger.info(f"Validating {t_file.name} syntax and fixtures...")
+        res = subprocess.run(["pytest", "--collect-only", str(t_file)], capture_output=True, text=True)
+        if res.returncode != 0:
+            logger.warning(f"Validation failed for {t_file.name}! Attempting auto-fix...")
+            error_log = res.stdout + "\n" + res.stderr
+            fix_prompt = f"The following test file failed collection/compilation:\n\n```python\n{t_file.read_text(encoding='utf-8')}\n```\n\nError output:\n```\n{error_log}\n```\n\nFix the code. Return ONLY the complete fixed Python code in a ```python block."
+            fixed_raw = call_gemini(fix_prompt, args.model, "You are a Python QA expert fixing broken pytest code. Output ONLY python code.", f"fix_{t_file.name}.log")
+            match = re.search(r"```python\n(.*?)```", fixed_raw, re.DOTALL)
+            if match:
+                t_file.write_text(sanitize_generated_code(match.group(1).strip()), encoding="utf-8")
+                logger.info(f"Applied auto-fix to {t_file.name}.")
+            else:
+                logger.error(f"Failed to extract fixed code for {t_file.name}.")
+        else:
+            logger.info(f"{t_file.name} is structurally valid.")
 
+    logger.info("Review the generated files before running them!")
 
 if __name__ == "__main__":
     main()
