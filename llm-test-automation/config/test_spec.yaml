@@ -1,110 +1,26 @@
 # ---------------------------------------------------------------------------
-# Test Spec: Structured prompt and domain specification for test generation.
-# Adheres to Single Responsibility Principle (SRP) by separating Concerns:
-# Project Metadata, Framework Config, Engineering Rules, Coverage Spec,
-# Guardrails, API Manifest, and Output Config.
+# test_spec.yaml
+# Minimal configuration.
+# The LLM autonomously derives test scenarios from dynamically gathered UI + API context.
+# Code generation rules live in config/system_prompt.txt — NOT here.
 # ---------------------------------------------------------------------------
 
-project_metadata:
-  project_name: "eventhub"
-  display_name: "EventHub Test Automation Suite"
+project:
+  name: "eventhub"
+  display_name: "EventHub — Discover & Book Events"
   environment: "staging"
-  target_urls:
-    ui_base_url: "https://eventhub.rahulshettyacademy.com"
-    login_url: "https://eventhub.rahulshettyacademy.com/login"
-    api_base_url: "https://api.eventhub.rahulshettyacademy.com/api"
-  auth_credentials:
-    type: "form_login"
-    username_env: "TEST_USERNAME"
-    password_env: "TEST_PASSWORD"
 
-framework_config:
-  ui_framework: "playwright-python"
-  api_framework: "requests+pytest"
-  test_runner: "pytest"
-  assertion_style: "pytest+expect"
+target:
+  ui_url:      "https://eventhub.rahulshettyacademy.com"
+  login_url:   "https://eventhub.rahulshettyacademy.com/login"
+  api_url:     "https://api.eventhub.rahulshettyacademy.com/api"
 
-code_generation_rules:
-  playwright_rules:
-    - "This is PYTHON Playwright. All assertions MUST use snake_case: to_be_visible(), to_have_url(), to_have_value(), to_be_enabled(), to_be_disabled(). NEVER use camelCase JS-style method names like toBeVisible() or toHaveURL()."
-    - "`page` is a fixture, not an importable name. NEVER write `from playwright.sync_api import page`. The only valid imports from playwright.sync_api are `Page` (capital P for type hints) and `expect`."
-    - "Use re.compile(...) when asserting URLs or button text regexes: expect(page).to_have_url(re.compile(r'/dashboard'))."
+credentials:
+  username_env: "TEST_USERNAME"
+  password_env: "TEST_PASSWORD"
 
-  locator_strategy:
-    - "Strict locator preference order: data-testid > role/aria-label > id > name > text."
-    - "If a locator appears multiple times on a page (e.g. repeated cards/items), disambiguate using .filter(has_text='...') or .nth(index)."
-    - "Never guess CSS selectors or element IDs that are not present in the supplied UI context."
-
-  api_rules:
-    - "For POST /bookings requests, always provide all required fields: customerName, customerEmail, customerPhone, quantity, and eventId."
-    - "Obtain a fresh Bearer token via POST /auth/register or POST /auth/login for endpoints requiring auth."
-    - "Assert HTTP status code AND response payload structure for every endpoint call."
-
-  code_quality:
-    - "Group related tests into logical classes named Test<Feature> (e.g., TestAuthAPI, TestEventsAPI, TestBookingsAPI, TestEventHubUI)."
-    - "Write clear, descriptive docstrings for every test function stating what is verified and expected behavior."
-    - "Use unique emails and identifiers via `uuid.uuid4().hex[:6]` to ensure tests remain completely independent."
-
-coverage_spec:
-  level: "smoke"
-  suites:
-    auth_api:
-      - scenario: "POST /auth/register creates a new user account"
-        expected: "Status 200 or 201 with success confirmation"
-      - scenario: "POST /auth/login authenticates valid user"
-        expected: "Status 200 and returns a valid Bearer token"
-      - scenario: "POST /auth/login rejects wrong password"
-        expected: "Status 400 or 401 with error message"
-      - scenario: "GET /auth/me returns user profile when authenticated"
-        expected: "Status 200 with success: true, user.userId, and user.email"
-      - scenario: "GET /auth/me rejects unauthenticated request"
-        expected: "Status 401 Unauthorized"
-
-    events_api:
-      - scenario: "GET /events returns list of available events"
-        expected: "Status 200 and a non-empty array of event objects"
-      - scenario: "GET /events/{id} returns single event details"
-        expected: "Status 200 with event title, id, and location"
-
-    bookings_api:
-      - scenario: "POST /bookings creates a booking for available event"
-        expected: "Status 200 or 201 when customerName, customerEmail, customerPhone, quantity, and eventId are provided"
-      - scenario: "GET /bookings/ref/{ref} retrieves booking by reference"
-        expected: "Status 200 returning booking record"
-      - scenario: "DELETE /bookings/{id} cancels an existing booking"
-        expected: "Status 200 or 204"
-      - scenario: "POST /bookings rejects invalid or nonexistent event ID"
-        expected: "Status 400, 404, or 422"
-
-    ui_flows:
-      - scenario: "Login page loads successfully with interactive elements"
-        expected: "Email input, password input, and Sign In button are visible"
-
-constraints_and_guardrails:
-  - "Do not submit real payments - use sandbox/test data only"
-  - "Do not create more than 3 new user accounts per run"
-  - "Do not delete or modify events created by other users"
-  - "Do not permanently delete/cancel bookings unless the test created them itself"
-  - "All destructive actions must run against staging only, never production"
-  - "Treat admin flows (creating/editing events via admin UI) as out of scope for this smoke suite"
-
-api_endpoints_manifest:
-  base_url: "https://api.eventhub.rahulshettyacademy.com/api"
-  endpoints:
-    - {path: "/auth/register", method: "POST", auth_required: false}
-    - {path: "/auth/login", method: "POST", auth_required: false}
-    - {path: "/auth/me", method: "GET", auth_required: true,
-       note: "CONFIRMED response shape: {\"success\": true, \"user\": {\"userId\": ..., \"email\": ...}} - id field is userId not id."}
-    - {path: "/events", method: "GET", auth_required: true,
-       note: "CONFIRMED: requires Bearer token."}
-    - {path: "/events/{id}", method: "GET", auth_required: true,
-       note: "CONFIRMED: requires Bearer token."}
-    - {path: "/bookings", method: "POST", auth_required: true,
-       note: "CONFIRMED required payload: {eventId, customerName, customerEmail, customerPhone, quantity}."}
-    - {path: "/bookings/ref/{ref}", method: "GET", auth_required: false}
-    - {path: "/bookings/{id}", method: "DELETE", auth_required: true}
-
-output_spec:
-  output_dir: "tests/"
-  test_file_pattern: "test_{project_name}.py"
-  manifest_pattern: "{project_name}_manifest.json"
+constraints:
+  - "Admin UI flows (create, edit, delete events) are out of scope for this suite"
+  - "For payment, event details, booking details use test and sandbox data"
+  - "All destructive test actions must target staging only — never production"
+  - "Do not modify or delete events or bookings created by other users"

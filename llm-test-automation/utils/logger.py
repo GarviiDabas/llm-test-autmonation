@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-LOG_DIR = Path("logs")
+LOG_DIR = Path("generated/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 AUTOMATION_LOG_FILE = LOG_DIR / "automation.log"
 
@@ -22,7 +22,7 @@ AUTOMATION_LOG_FILE = LOG_DIR / "automation.log"
 def get_logger(name: str = "automation", log_file: Path = AUTOMATION_LOG_FILE, level: str = None) -> logging.Logger:
     """
     Returns a configured logger instance with both Console and File handlers.
-    
+
     :param name: Name of the logger instance (usually __name__ or module name)
     :param log_file: Path to log file
     :param level: Optional override log level (DEBUG, INFO, WARNING, ERROR)
@@ -52,9 +52,10 @@ def get_logger(name: str = "automation", log_file: Path = AUTOMATION_LOG_FILE, l
         backupCount=3,
         encoding="utf-8"
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
 
     logger.propagate = False
 

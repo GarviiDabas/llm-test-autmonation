@@ -14,15 +14,22 @@ import requests
 from dotenv import load_dotenv
 from playwright.sync_api import Page
 from utils.logger import get_logger
+from utils.constants import (
+    API_BASE_URL,
+    UI_BASE_URL,
+    LOGIN_URL,
+    DEFAULT_TEST_PASSWORD,
+    PROJECT_NAME,
+    REPORT_TITLE
+)
 
 logger = get_logger("conftest")
 
 load_dotenv()
 
-DEFAULT_API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.eventhub.rahulshettyacademy.com/api")
-DEFAULT_UI_BASE_URL = os.environ.get("UI_BASE_URL", "https://eventhub.rahulshettyacademy.com")
-LOGIN_URL = os.environ.get("LOGIN_URL", "https://eventhub.rahulshettyacademy.com/login")
-
+# Suppress verbose INFO logs from the google_genai SDK (e.g. AFC enabled messages)
+import logging
+logging.getLogger("google_genai").setLevel(logging.WARNING)
 
 # ============================================================================
 # Environment & Client Fixtures
@@ -37,13 +44,13 @@ def test_logger(request):
 @pytest.fixture(scope="session")
 def api_base_url() -> str:
     """Returns the Base URL for API endpoints."""
-    return DEFAULT_API_BASE_URL.rstrip("/")
+    return API_BASE_URL.rstrip("/")
 
 
 @pytest.fixture(scope="session")
 def ui_base_url() -> str:
     """Returns the Base URL for the frontend application."""
-    return DEFAULT_UI_BASE_URL.rstrip("/")
+    return UI_BASE_URL.rstrip("/")
 
 
 @pytest.fixture
@@ -62,11 +69,11 @@ def api_client(api_base_url: str) -> requests.Session:
     token_data = login_resp.json()
     token = token_data.get("token") or token_data.get("accessToken")
 
-    if token:
-        logger.info("Successfully obtained Bearer token for API client session.")
-    else:
-        logger.error(f"Failed to obtain auth token. Login response: {login_resp.text}")
-
+    if not token:
+        pytest.fail(
+            f"api_client fixture: failed to obtain auth token. "
+            f"Login status: {login_resp.status_code}. Response: {login_resp.text}"
+        )
     session.headers.update({
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -126,8 +133,23 @@ def pytest_html_report_title(report):
 def pytest_configure(config):
     if hasattr(config, "_metadata"):
         config._metadata["Project Name"] = "EventHub Test Automation"
-        config._metadata["Target API / App"] = DEFAULT_API_BASE_URL
+        config._metadata["Target API / App"] = API_BASE_URL
         config._metadata["Execution Mode"] = "Pytest + Playwright (Headless)"
+
+
+def pytest_unconfigure(config):
+    """Ensure generated HTML reports include lang='en' for WCAG accessibility and SonarQube compliance."""
+    htmlpath = getattr(config.option, "htmlpath", None)
+    if htmlpath:
+        from pathlib import Path
+        p = Path(htmlpath)
+        if p.exists():
+            try:
+                text = p.read_text(encoding="utf-8")
+                if "<html>" in text:
+                    p.write_text(text.replace("<html>", '<html lang="en">', 1), encoding="utf-8")
+            except Exception:
+                pass
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -136,6 +158,25 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if call.when == "call":
         setattr(item, "rep_call", report)
+
+    # Format human-readable test name for Pytest HTML report
+    doc = item.obj.__doc__.strip().split("\n")[0] if (item.obj and item.obj.__doc__) else ""
+    class_name = item.cls.__name__ if item.cls else ""
+    pretty_class = re.sub(r"^Test", "", class_name)
+    pretty_class = re.sub(r"([A-Z])", r" \1", pretty_class).strip()
+
+    if doc:
+        if pretty_class:
+            report.nodeid = f"{pretty_class} - {doc}"
+        else:
+            report.nodeid = doc
+    else:
+        func_name = item.name.split("[")[0]
+        pretty_func = re.sub(r"^test_", "", func_name).replace("_", " ").title()
+        if pretty_class:
+            report.nodeid = f"{pretty_class} - {pretty_func}"
+        else:
+            report.nodeid = pretty_func
 
     extras = getattr(report, "extras", [])
 
@@ -159,4 +200,64 @@ def pytest_runtest_makereport(item, call):
             except Exception:
                 pass
 
+        # AI Failure Analysis
+        if hasattr(report, "longreprtext") and report.longreprtext:
+            try:
+                from google import genai
+                from google.genai import types
+
+                api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if api_key:
+                    client = genai.Client()
+                    explanation_prompt = f"Analyze this pytest failure trace and explain what went wrong in simple, human-readable English (2-3 sentences max). Focus on the core reason it failed. Trace:\n\n{report.longreprtext}"
+                    response = client.models.generate_content(
+                        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                        contents=[explanation_prompt],
+                        config=types.GenerateContentConfig(temperature=0.2)
+                    )
+                    if response.text:
+                        pytest_html = item.config.pluginmanager.getplugin("html")
+                        if pytest_html:
+                            extras.append(
+                                pytest_html.extras.html(
+                                    f'<div style="margin-top:12px; padding: 12px; background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; font-family: sans-serif;">'
+                                    f'<strong style="color:#b91c1c; font-size: 14px;">Failure Analysis:</strong><br/>'
+                                    f'<span style="color:#7f1d1d; font-size: 13px; line-height: 1.5;">{response.text}</span>'
+                                    f'</div>'
+                                )
+                            )
+            except Exception as e:
+                logger.error(f"Failed to generate AI explanation: {e}")
+
     report.extras = extras
+
+
+@pytest.fixture(scope="session")
+def registered_user():
+    """Fixture to create a unique test user for API tests."""
+    email = f"test_{uuid.uuid4().hex[:6]}@example.com"
+    password = DEFAULT_TEST_PASSWORD
+
+    reg_res = requests.post(f"{API_BASE_URL}/auth/register", json={"email": email, "password": password})
+
+    if reg_res.status_code in [200, 201]:
+        data = reg_res.json()
+        token = data.get("token") or data.get("accessToken") or data.get("access_token")
+        if token:
+            return {"email": email, "password": password, "token": token}
+
+    # Fallback: attempt login (user may already exist)
+    login_res = requests.post(f"{API_BASE_URL}/auth/login", json={"email": email, "password": password})
+    if login_res.status_code != 200:
+        pytest.fail(
+            f"registered_user fixture: registration returned {reg_res.status_code} "
+            f"and login fallback returned {login_res.status_code}. "
+            f"Cannot proceed. Login response: {login_res.text}"
+        )
+
+    data = login_res.json()
+    token = data.get("token") or data.get("accessToken") or data.get("access_token")
+    if not token:
+        pytest.fail(f"registered_user fixture: login succeeded but no token in response: {data}")
+
+    return {"email": email, "password": password, "token": token}
