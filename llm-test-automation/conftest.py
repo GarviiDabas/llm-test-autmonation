@@ -1,9 +1,3 @@
-"""
-conftest.py
-
-Shared pytest fixtures for the EventHub test suite & Pytest-HTML report hooks.
-"""
-
 import base64
 import os
 import re
@@ -27,10 +21,10 @@ logger = get_logger("conftest")
 
 load_dotenv()
 
-# Suppress verbose INFO logs from the google_genai SDK (e.g. AFC enabled messages)
+# Suppress verbose INFO/WARNING logs from the google_genai SDK and httpx
 import logging
-logging.getLogger("google_genai").setLevel(logging.WARNING)
-
+logging.getLogger("google_genai").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 # ============================================================================
 # Environment & Client Fixtures
 # ============================================================================

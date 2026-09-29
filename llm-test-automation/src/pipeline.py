@@ -49,11 +49,14 @@ def main():
     ui_url = target.get("ui_url", "")
 
     if not args.skip_gather:
-        gather_cmd = [sys.executable, "context_gatherer.py", "--url", ui_url]
+        gather_cmd = [sys.executable, "-m", "src.context_gatherer", "--url", ui_url]
+        login_url = target.get("login_url", "")
+        if login_url:
+            gather_cmd.extend(["--login-url", login_url])
         run_step(gather_cmd, "Context Gathering (UI scrape + API context via Network)")
 
     if not args.skip_generate:
-        gen_cmd = [sys.executable, "generate_tests.py", "--spec", args.spec]
+        gen_cmd = [sys.executable, "-m", "src.generate_tests", "--spec", args.spec]
         if args.model:
             gen_cmd += ["--model", args.model]
         run_step(gen_cmd, "Test Generation (Gemini API)")

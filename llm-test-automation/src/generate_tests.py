@@ -21,6 +21,9 @@ logger = get_logger("generate_tests")
 
 load_dotenv()
 
+import logging
+logging.getLogger("google_genai").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 MANIFEST_START, MANIFEST_END = "### MANIFEST_JSON_START", "### MANIFEST_JSON_END"
 CODE_START, CODE_END = "### TEST_CODE_START", "### TEST_CODE_END"
