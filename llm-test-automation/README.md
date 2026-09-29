@@ -27,8 +27,9 @@ Update `config/test_spec.yaml` with your target URLs and domain constraints. (Ke
 ### 2. Run the Pipeline
 Run the unified pipeline script to gather context and generate the tests in one go:
 ```bash
-python pipeline.py
+python src/pipeline.py
 ```
+
 *(You can also use `--skip-gather` or `--skip-generate` if you only want to run a specific part of the pipeline).*
 
 ### 3. Review the Output
